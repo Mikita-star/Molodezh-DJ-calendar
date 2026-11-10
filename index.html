@@ -400,7 +400,8 @@ $('copySets').onclick = () => {
 // ---------- Отправка в общее хранилище ----------
 // Хранилище проверяет подпись Telegram (initData), поэтому отправлять можно только из бота
 const serverReady = () => !!(SERVER_URL && tg && tg.initData);
-const PUSHED_KEY = `mdjcal.pushedAt.tg${TG_USER}`;
+// v2: первая версия скрипта таблицы теряла слоты — после её замены все отправляют данные заново
+const PUSHED_KEY = `mdjcal.pushedAt.v2.tg${TG_USER}`;
 let serverState = ''; // '', 'sending', 'ok', 'error'
 
 async function api(action, payload = {}) {
