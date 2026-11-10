@@ -26,7 +26,6 @@
     --green: #22c55e;
     --danger: #ef4444;
     --radius: 14px;
-    --nav: rgba(14,14,20,.95);
     --soft-accent: #fdba74;
     --statusbar: var(--bg);
     /* Отступы под вырез iPhone и кнопки Telegram (переменные --tg-* выставляет сам Telegram) */
@@ -46,7 +45,6 @@
     --on-accent: #ffffff;
     --green: #16a34a;
     --danger: #dc2626;
-    --nav: rgba(255,255,255,.95);
     --soft-accent: #ea580c;
     --statusbar: #ea580c; /* на iPhone текст статус-бара белый, на светлом фоне его не видно */
   }
@@ -57,7 +55,7 @@
   body::before { content: ''; position: fixed; top: 0; left: 0; right: 0; height: var(--top-inset); background: var(--statusbar); z-index: 15; }
   button, input { font: inherit; color: inherit; }
   button { cursor: pointer; }
-  header { padding: calc(14px + var(--top-inset) + var(--top-controls)) 16px 8px; display: flex; align-items: center; gap: 10px; }
+  header { padding: calc(14px + var(--top-inset) + var(--top-controls)) 16px 8px; display: flex; align-items: center; gap: 8px; }
   header h1 { font-size: 20px; margin: 0; flex: 1; letter-spacing: .3px; }
   header h1 span { color: var(--accent); }
   main { max-width: 760px; margin: 0 auto; padding: 0 16px; overflow-x: clip; }
@@ -68,16 +66,21 @@
   .btn:disabled { opacity: .5; }
   .icon-btn { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; width: 38px; height: 38px;
     display: inline-flex; align-items: center; justify-content: center; }
+  .admin-btn { height: 38px; padding: 0 12px; border-radius: 10px; background: var(--accent-soft); border: 1px solid var(--accent);
+    color: var(--accent); font-weight: 700; font-size: 14px; }
   .row { display: flex; gap: 8px; align-items: center; }
   .spacer { flex: 1; }
   .muted { color: var(--muted); }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; margin: 14px 0; }
+  .status { font-size: 13px; color: var(--muted); margin-top: 10px; }
+  .status.ok { color: var(--green); }
+  .status.err { color: var(--danger); }
 
   /* Календарь */
   .cal-head { display: flex; align-items: center; gap: 8px; margin: 6px 0 10px; }
   .cal-head h2 { flex: 1; text-align: center; margin: 0; font-size: 18px; text-transform: capitalize; }
   .grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
-  #calendar, #setsCard { touch-action: pan-y; }
+  .swipe { touch-action: pan-y; }
   .wd { text-align: center; font-size: 12px; color: var(--muted); padding: 4px 0; }
   .wd.we { color: var(--soft-accent); }
   .cell { min-height: 74px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px;
@@ -89,6 +92,7 @@
   .cell.today .num { color: var(--accent); }
   .slot-tag { font-size: 9.5px; line-height: 1.3; background: var(--accent); color: var(--on-accent); border-radius: 4px;
     padding: 1px 1px; white-space: nowrap; overflow: hidden; text-align: center; letter-spacing: -.3px; font-weight: 700; }
+  .count-tag { margin-top: auto; font-size: 11px; font-weight: 700; color: var(--accent); }
   @media (min-width: 600px) { .cell { min-height: 92px; } .slot-tag { font-size: 12px; } }
   @keyframes slideNext { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
   @keyframes slidePrev { from { opacity: 0; transform: translateX(-24px); } to { opacity: 1; transform: none; } }
@@ -96,14 +100,21 @@
   .slide-prev { animation: slidePrev .22s ease-out; }
   @media (prefers-reduced-motion: reduce) { .slide-next, .slide-prev { animation: none; } }
 
-  /* Список сетов */
+  /* Списки */
   .sets-list { margin: 0; padding: 0; list-style: none; }
-  .sets-list li { padding: 9px 0; border-bottom: 1px solid var(--line); display: flex; gap: 10px; cursor: pointer; }
+  .sets-list li { padding: 9px 0; border-bottom: 1px solid var(--line); display: flex; gap: 10px; }
+  .sets-list li[data-date] { cursor: pointer; }
   .sets-list li:last-child { border-bottom: 0; }
   .sets-list .d { min-width: 118px; font-weight: 600; }
   .sets-list .t { color: var(--accent); flex: 1; }
   .sets-list li.past { opacity: .5; }
+  .dj-name { font-weight: 700; font-size: 16px; }
   .empty { text-align: center; color: var(--muted); padding: 18px 0; }
+  .slot-line { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .slot-line:last-child { border-bottom: 0; }
+  .slot-line .s { min-width: 104px; font-weight: 700; }
+  .slot-line .n { flex: 1; color: var(--accent); }
+  .slot-line .n.none { color: var(--muted); }
 
   /* Окна */
   .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: flex-end; justify-content: center; z-index: 20; }
@@ -112,7 +123,8 @@
     max-height: 92vh; overflow-y: auto; padding: 18px 16px calc(18px + var(--bottom-inset)); }
   @media (min-width: 600px) { .overlay { align-items: center; } .modal { border-radius: 18px; } }
   .modal h3 { margin: 0 0 4px; font-size: 18px; }
-  label.f { display: block; margin: 12px 0 6px; font-size: 13px; color: var(--muted); }
+  label.f { display: block; margin: 14px 0 6px; font-size: 13px; color: var(--muted); }
+  input[type=text] { width: 100%; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-height: 42px; }
   .slot-btn { width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 14px; margin-bottom: 8px; border-radius: 12px;
     background: var(--panel2); border: 1px solid var(--line); font-size: 17px; font-weight: 600; text-align: left; }
   .slot-btn .box { width: 22px; height: 22px; border-radius: 6px; border: 2px solid var(--muted); flex: none;
@@ -136,6 +148,7 @@
 
 <header>
   <h1>Молодежь <span>DJ</span> календарь</h1>
+  <button class="admin-btn" id="toggleAdmin" style="display:none">Админ</button>
   <button class="icon-btn" id="openSettings" aria-label="Настройки">
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
   </button>
@@ -147,24 +160,49 @@
     <h2 id="monthTitle"></h2>
     <button class="icon-btn" id="nextMonth" aria-label="Следующий месяц">›</button>
   </div>
-  <div class="grid" id="weekdays"></div>
-  <div class="grid" id="calendar"></div>
 
-  <div class="card" id="setsCard">
-    <div class="row" style="margin-bottom:6px">
-      <b class="spacer" id="setsTitle"></b>
-      <button class="btn primary small" id="copySets">Скопировать</button>
+  <!-- Календарь диджея -->
+  <section id="userView">
+    <div class="grid" id="weekdays"></div>
+    <div class="grid swipe" id="calendar"></div>
+    <div class="card swipe" id="setsCard">
+      <div class="row" style="margin-bottom:6px">
+        <b class="spacer" id="setsTitle"></b>
+        <button class="btn primary small" id="copySets">Скопировать</button>
+      </div>
+      <div id="setsList"></div>
+      <div class="status" id="serverStatus"></div>
     </div>
-    <div id="setsList"></div>
-  </div>
+  </section>
+
+  <!-- Админ-панель -->
+  <section id="adminView" style="display:none">
+    <div class="row" style="margin-bottom:10px">
+      <div class="seg spacer" id="adminMode">
+        <button data-v="dates">По датам</button>
+        <button data-v="djs">По диджеям</button>
+      </div>
+      <button class="icon-btn" id="adminRefresh" aria-label="Обновить">↻</button>
+    </div>
+    <div id="adminDates">
+      <div class="grid" id="adminWeekdays"></div>
+      <div class="grid swipe" id="adminCalendar"></div>
+    </div>
+    <div class="swipe" id="adminDjs"></div>
+    <div class="status" id="adminStatus"></div>
+  </section>
 </main>
 
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
 
 <script>
+// Адрес хранилища (Google Apps Script → Развернуть → Веб-приложение). Пусто — данные никуда не отправляются.
+const SERVER_URL = '';
+
 const MONTHS = ['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
 const MONTHS_GEN = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+const MONTHS_PREP = ['январе','феврале','марте','апреле','мае','июне','июле','августе','сентябре','октябре','ноябре','декабре'];
 const WD_SHORT = ['вс','пн','вт','ср','чт','пт','сб'];
 const WD_LONG = ['воскресенье','понедельник','вторник','среда','четверг','пятница','суббота'];
 
@@ -173,14 +211,14 @@ const WEEKDAY_SLOTS = ['21:00–00:00', '00:00–03:00', '03:00–06:00'];
 const WEEKEND_SLOTS = ['20:00–22:00', '22:00–00:00', '00:00–02:00', '02:00–04:00', '04:00–06:00', '06:00–09:00'];
 
 // ---------- Данные ----------
+const tg = window.Telegram && window.Telegram.WebApp;
+const TG = (() => {
+  try { return tg.initDataUnsafe.user || null; } catch (e) { return null; }
+})();
 // Внутри Telegram копия данных на устройстве хранится отдельно для каждого аккаунта,
 // иначе два аккаунта на одном телефоне видели бы один календарь
-const TG_USER = (() => {
-  try {
-    const u = window.Telegram.WebApp.initDataUnsafe.user;
-    return u && u.id ? String(u.id) : '';
-  } catch (e) { return ''; }
-})();
+const TG_USER = TG && TG.id ? String(TG.id) : '';
+const TG_NAME = TG ? [TG.first_name, TG.last_name].filter(Boolean).join(' ') : '';
 const STORAGE_KEY = TG_USER ? `mdjcal.v1.tg${TG_USER}` : 'mdjcal.v1';
 
 const defaultState = () => ({ sets: {}, settings: {} });
@@ -210,7 +248,10 @@ function save() {
   storeLocal();
   renderAll();
   cloudPushSoon();
+  serverPushSoon();
 }
+
+const nick = () => (state.settings.nick || '').trim() || TG_NAME;
 
 // ---------- Даты ----------
 const pad = n => String(n).padStart(2, '0');
@@ -227,7 +268,9 @@ const dateLong = s => { const { m, d } = parseDate(s); return `${d} ${MONTHS_GEN
 const shortSlot = slot => slot.replace(/:00/g, ''); // «22:00–00:00» → «22–00»
 const monthBounds = (y, m) => [ymd(y, m, 1), ymd(y, m, new Date(y, m + 1, 0).getDate())];
 // Выбранные слоты даты — в том порядке, в каком они идут за ночь
-const setsOn = ds => slotsFor(ds).filter(s => (state.sets[ds] || []).includes(s));
+const slotsOf = (sets, ds) => slotsFor(ds).filter(s => (sets[ds] || []).includes(s));
+const setsOn = ds => slotsOf(state.sets, ds);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // ---------- Утилиты интерфейса ----------
 const $ = id => document.getElementById(id);
@@ -265,15 +308,17 @@ function openModal(html) {
 function closeModal() { $('overlay').classList.remove('open'); applyTheme(); }
 $('overlay').addEventListener('click', e => { if (e.target.id === 'overlay') closeModal(); });
 
-// ---------- Календарь ----------
+// ---------- Сетка месяца (общая для диджея и админа) ----------
 const now = new Date();
 let view = { y: now.getFullYear(), m: now.getMonth() };
 
-$('weekdays').innerHTML = ['пн','вт','ср','чт','пт','сб','вс']
+const weekdaysHtml = ['пн','вт','ср','чт','пт','сб','вс']
   .map((w, i) => `<div class="wd ${i === 4 || i === 5 ? 'we' : ''}">${w}</div>`).join('');
+$('weekdays').innerHTML = weekdaysHtml;
+$('adminWeekdays').innerHTML = weekdaysHtml;
 
-function renderCalendar() {
-  $('monthTitle').textContent = `${MONTHS[view.m]} ${view.y}`;
+// cellInner(ds) возвращает { cls, html } для содержимого ячейки
+function renderGrid(el, cellInner, onPick) {
   const shift = (new Date(view.y, view.m, 1).getDay() + 6) % 7; // понедельник — первый день
   const startN = dayNum(ymd(view.y, view.m, 1)) - shift;
   const today = todayStr();
@@ -282,73 +327,236 @@ function renderCalendar() {
     const ds = fromDayNum(startN + i);
     const { m, d } = parseDate(ds);
     if (i >= 35 && m !== view.m) break;
-    const sets = setsOn(ds);
-    const cls = ['cell'];
+    const inner = cellInner(ds);
+    const cls = ['cell', inner.cls];
     if (m !== view.m) cls.push('other');
     if (ds === today) cls.push('today');
-    if (sets.length) cls.push('has');
-    const tags = sets.map(s => `<div class="slot-tag">${shortSlot(s)}</div>`).join('');
-    html += `<button class="${cls.join(' ')}" data-date="${ds}"><span class="num">${d}</span>${tags}</button>`;
+    html += `<button class="${cls.join(' ')}" data-date="${ds}"><span class="num">${d}</span>${inner.html}</button>`;
   }
-  $('calendar').innerHTML = html;
-  $('calendar').querySelectorAll('.cell').forEach(c => c.onclick = () => openDay(c.dataset.date));
+  el.innerHTML = html;
+  el.querySelectorAll('.cell').forEach(c => c.onclick = () => onPick(c.dataset.date));
 }
 
-// ---------- Окно дня: выбор слотов ----------
+function renderCalendar() {
+  renderGrid($('calendar'), ds => {
+    const sets = setsOn(ds);
+    return { cls: sets.length ? 'has' : '', html: sets.map(s => `<div class="slot-tag">${shortSlot(s)}</div>`).join('') };
+  }, openDay);
+}
+
+// ---------- Окно дня: выбор свободного времени ----------
 function openDay(ds) {
   const chosen = new Set(state.sets[ds] || []);
-  const draw = () => {
-    openModal(`
-      <h3>${dateLong(ds)}</h3>
-      <div class="muted" style="font-size:13px;margin-bottom:12px">${isWeekend(ds) ? 'Выходной' : 'Будний день'} · отметь свои сеты</div>
-      ${slotsFor(ds).map(s => `
-        <button class="slot-btn ${chosen.has(s) ? 'on' : ''}" data-slot="${s}"><span class="box">✓</span>${s}</button>`).join('')}
-      <div class="actions">
-        <button class="btn" id="dCancel">Отмена</button>
-        <button class="btn primary" id="dSave">Сохранить</button>
-      </div>`);
-    $('modal').querySelectorAll('.slot-btn').forEach(b => b.onclick = () => {
-      const s = b.dataset.slot;
-      chosen.has(s) ? chosen.delete(s) : chosen.add(s);
-      b.classList.toggle('on', chosen.has(s));
-    });
-    $('dCancel').onclick = closeModal;
-    $('dSave').onclick = () => {
-      if (chosen.size) state.sets[ds] = slotsFor(ds).filter(s => chosen.has(s));
-      else delete state.sets[ds];
-      save();
-      closeModal();
-    };
+  openModal(`
+    <h3>${dateLong(ds)}</h3>
+    <div class="muted" style="font-size:13px;margin-bottom:12px">${isWeekend(ds) ? 'Выходной' : 'Будний день'} · отметь своё свободное время</div>
+    ${slotsFor(ds).map(s => `
+      <button class="slot-btn ${chosen.has(s) ? 'on' : ''}" data-slot="${s}"><span class="box">✓</span>${s}</button>`).join('')}
+    <div class="actions">
+      <button class="btn" id="dCancel">Отмена</button>
+      <button class="btn primary" id="dSave">Сохранить</button>
+    </div>`);
+  $('modal').querySelectorAll('.slot-btn').forEach(b => b.onclick = () => {
+    const s = b.dataset.slot;
+    chosen.has(s) ? chosen.delete(s) : chosen.add(s);
+    b.classList.toggle('on', chosen.has(s));
+  });
+  $('dCancel').onclick = closeModal;
+  $('dSave').onclick = () => {
+    if (chosen.size) state.sets[ds] = slotsFor(ds).filter(s => chosen.has(s));
+    else delete state.sets[ds];
+    save();
+    closeModal();
   };
-  draw();
 }
 
-// ---------- Список сетов за месяц ----------
-function monthSets() {
+// ---------- Моё свободное время за месяц ----------
+function monthDays(sets) {
   const [from, to] = monthBounds(view.y, view.m);
-  return Object.keys(state.sets).filter(ds => ds >= from && ds <= to && setsOn(ds).length).sort()
-    .map(ds => ({ date: ds, slots: setsOn(ds) }));
+  return Object.keys(sets).filter(ds => ds >= from && ds <= to && slotsOf(sets, ds).length).sort()
+    .map(ds => ({ date: ds, slots: slotsOf(sets, ds) }));
 }
 
 function renderSets() {
-  const days = monthSets();
+  const days = monthDays(state.sets);
   const today = todayStr();
-  $('setsTitle').textContent = `Мои сеты — ${MONTHS[view.m]}${days.length ? ` (${days.length})` : ''}`;
+  $('setsTitle').textContent = `Моё свободное время — ${MONTHS[view.m]}${days.length ? ` (${days.length})` : ''}`;
   $('setsList').innerHTML = days.length
     ? `<ul class="sets-list">${days.map(d => `
         <li class="${d.date < today ? 'past' : ''}" data-date="${d.date}">
           <span class="d">${dateShort(d.date)}</span>
           <span class="t">${d.slots.join(', ')}</span>
         </li>`).join('')}</ul>`
-    : '<div class="empty">В этом месяце сетов нет. Нажми на день в календаре, чтобы отметить сет.</div>';
+    : '<div class="empty">В этом месяце свободное время не отмечено. Нажми на день в календаре, чтобы отметить.</div>';
   $('setsList').querySelectorAll('li[data-date]').forEach(li => li.onclick = () => openDay(li.dataset.date));
   $('copySets').disabled = !days.length;
 }
 
 $('copySets').onclick = () => {
-  const days = monthSets();
-  copyText(`Сеты — ${MONTHS[view.m]} ${view.y}:\n` + days.map(d => `${dateShort(d.date)} — ${d.slots.join(', ')}`).join('\n'));
+  const days = monthDays(state.sets);
+  copyText(`Моё свободное время — ${MONTHS[view.m]} ${view.y}:\n` + days.map(d => `${dateShort(d.date)} — ${d.slots.join(', ')}`).join('\n'));
 };
+
+// ---------- Отправка в общее хранилище ----------
+// Хранилище проверяет подпись Telegram (initData), поэтому отправлять можно только из бота
+const serverReady = () => !!(SERVER_URL && tg && tg.initData);
+const PUSHED_KEY = `mdjcal.pushedAt.tg${TG_USER}`;
+let serverState = ''; // '', 'sending', 'ok', 'error'
+
+async function api(action, payload = {}) {
+  const res = await fetch(SERVER_URL, { method: 'POST', body: JSON.stringify({ action, initData: tg.initData, ...payload }) });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || 'server');
+  return data;
+}
+
+function renderServerStatus() {
+  const el = $('serverStatus');
+  el.className = 'status';
+  if (!tg || !tg.initData) {
+    el.textContent = 'Открой календарь через бота в Telegram, чтобы администратор видел твоё свободное время.';
+  } else if (!SERVER_URL) {
+    el.textContent = 'Общее хранилище ещё не подключено — администратор пока не видит твоё время.';
+  } else if (serverState === 'sending') {
+    el.textContent = 'Отправляю администратору…';
+  } else if (serverState === 'error') {
+    el.className = 'status err';
+    el.textContent = 'Не удалось отправить администратору. Попробую ещё раз при следующем открытии.';
+  } else if (!Object.keys(state.sets).length) {
+    el.textContent = `Отмеченное свободное время сразу увидит администратор · ник: ${nick() || 'не указан'}`;
+  } else if (pushedAt() >= (state.updatedAt || 0)) {
+    el.className = 'status ok';
+    el.textContent = `✓ Администратор видит твоё время · ник: ${nick() || 'не указан'}`;
+  } else {
+    el.textContent = '';
+  }
+}
+
+function pushedAt() {
+  try { return Number(localStorage.getItem(PUSHED_KEY)) || 0; } catch (e) { return 0; }
+}
+
+let serverTimer;
+function serverPushSoon() {
+  if (!serverReady()) return;
+  clearTimeout(serverTimer);
+  serverTimer = setTimeout(serverPush, 1200);
+}
+
+async function serverPush() {
+  const stamp = state.updatedAt || 0;
+  serverState = 'sending';
+  renderServerStatus();
+  try {
+    const res = await api('save', { nick: nick(), sets: state.sets });
+    try { localStorage.setItem(PUSHED_KEY, String(stamp)); } catch (e) {}
+    serverState = 'ok';
+    setAdmin(res.admin);
+  } catch (e) {
+    serverState = 'error';
+  }
+  renderServerStatus();
+}
+
+// При запуске: узнаём, админ ли это, и досылаем то, что не ушло в прошлый раз
+async function serverHello() {
+  if (!serverReady()) return;
+  if (pushedAt() < (state.updatedAt || 0)) return serverPush();
+  try { setAdmin((await api('hello')).admin); } catch (e) {}
+}
+
+// ---------- Админ-панель ----------
+const ADMIN_KEY = `mdjcal.isAdmin.tg${TG_USER}`;
+let isAdminUser = (() => { try { return localStorage.getItem(ADMIN_KEY) === '1'; } catch (e) { return false; } })();
+let adminOpen = false;
+let adminMode = 'dates';
+let adminData = null; // список диджеев с сервера
+let adminLoading = false;
+
+function setAdmin(v) {
+  isAdminUser = !!v;
+  try { localStorage.setItem(ADMIN_KEY, isAdminUser ? '1' : '0'); } catch (e) {}
+  if (!isAdminUser && adminOpen) toggleAdmin(false);
+  $('toggleAdmin').style.display = isAdminUser ? '' : 'none';
+}
+
+function toggleAdmin(open = !adminOpen) {
+  adminOpen = open;
+  $('userView').style.display = open ? 'none' : '';
+  $('adminView').style.display = open ? '' : 'none';
+  $('toggleAdmin').textContent = open ? 'Мой календарь' : 'Админ';
+  if (open && !adminData) loadAdmin();
+  renderAll();
+}
+$('toggleAdmin').onclick = () => toggleAdmin();
+
+async function loadAdmin() {
+  adminLoading = true;
+  renderAdmin();
+  try {
+    adminData = (await api('admin')).djs;
+  } catch (e) {
+    toast(e.message === 'forbidden' ? 'Нет доступа администратора' : 'Не удалось загрузить данные', true);
+    if (e.message === 'forbidden') setAdmin(false);
+  }
+  adminLoading = false;
+  renderAdmin();
+}
+$('adminRefresh').onclick = loadAdmin;
+
+$('adminMode').querySelectorAll('button').forEach(b => b.onclick = () => { adminMode = b.dataset.v; renderAdmin(); });
+
+const djLabel = dj => esc(dj.nick || dj.tgName || dj.id);
+// Кто свободен в каждом слоте даты
+const freeBySlot = ds => slotsFor(ds).map(slot => ({
+  slot, djs: (adminData || []).filter(dj => (dj.sets[ds] || []).includes(slot)),
+}));
+
+function renderAdmin() {
+  if (!adminOpen) return;
+  $('adminMode').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === adminMode));
+  $('adminDates').style.display = adminMode === 'dates' ? '' : 'none';
+  $('adminDjs').style.display = adminMode === 'djs' ? '' : 'none';
+  const djs = adminData || [];
+  $('adminStatus').textContent = adminLoading ? 'Загружаю…' : adminData ? `Диджеев в списке: ${djs.length}` : '';
+
+  if (adminMode === 'dates') {
+    renderGrid($('adminCalendar'), ds => {
+      const n = djs.filter(dj => slotsOf(dj.sets, ds).length).length;
+      return { cls: n ? 'has' : '', html: n ? `<div class="count-tag">${n} DJ</div>` : '' };
+    }, openAdminDay);
+    return;
+  }
+  $('adminDjs').innerHTML = djs.length ? djs.map(dj => {
+    const days = monthDays(dj.sets);
+    return `
+      <div class="card">
+        <div class="row"><span class="dj-name spacer">${djLabel(dj)}</span><span class="muted" style="font-size:13px">${esc(dj.username)}</span></div>
+        ${days.length ? `<ul class="sets-list">${days.map(d => `
+          <li><span class="d">${dateShort(d.date)}</span><span class="t">${d.slots.join(', ')}</span></li>`).join('')}</ul>`
+          : `<div class="muted" style="margin-top:6px">В ${MONTHS_PREP[view.m]} свободное время не отмечено</div>`}
+      </div>`;
+  }).join('') : `<div class="empty">${adminLoading ? '' : 'Пока никто не отметил свободное время'}</div>`;
+}
+
+function openAdminDay(ds) {
+  const lines = freeBySlot(ds);
+  openModal(`
+    <h3>${dateLong(ds)}</h3>
+    <div class="muted" style="font-size:13px;margin-bottom:8px">Кто свободен</div>
+    ${lines.map(l => `
+      <div class="slot-line">
+        <span class="s">${l.slot}</span>
+        <span class="n ${l.djs.length ? '' : 'none'}">${l.djs.length ? l.djs.map(djLabel).join(', ') : 'никого'}</span>
+      </div>`).join('')}
+    <div class="actions">
+      <button class="btn" id="aCopy">Скопировать</button>
+      <button class="btn primary" id="aClose">Закрыть</button>
+    </div>`);
+  $('aClose').onclick = closeModal;
+  $('aCopy').onclick = () => copyText(`${dateShort(ds)}:\n` +
+    lines.map(l => `${l.slot} — ${l.djs.length ? l.djs.map(dj => dj.nick || dj.tgName || dj.id).join(', ') : 'никого'}`).join('\n'));
+}
 
 // ---------- Листание месяцев: стрелки и свайпы ----------
 function slide(el, dir) {
@@ -362,8 +570,7 @@ function move(dir) {
   if (view.m < 0) { view.m = 11; view.y--; }
   if (view.m > 11) { view.m = 0; view.y++; }
   renderAll();
-  slide($('calendar'), dir);
-  slide($('setsList'), dir);
+  (adminOpen ? [$('adminCalendar'), $('adminDjs')] : [$('calendar'), $('setsList')]).forEach(el => slide(el, dir));
 }
 
 // Свайп влево — следующий месяц, вправо — предыдущий; на Mac — жест двумя пальцами по трекпаду
@@ -393,10 +600,9 @@ function attachSwipe(el) {
 
 $('prevMonth').onclick = () => move(-1);
 $('nextMonth').onclick = () => move(1);
-attachSwipe($('calendar'));
-attachSwipe($('setsCard'));
+document.querySelectorAll('.swipe').forEach(attachSwipe);
 
-// ---------- Настройки: тема ----------
+// ---------- Настройки: ник, тема, Telegram ID ----------
 function applyTheme(theme = state.settings.theme || 'dark') {
   document.documentElement.dataset.theme = theme;
   document.querySelector('meta[name=theme-color]').content = theme === 'light' ? '#f4f4f8' : '#0e0e14';
@@ -406,11 +612,16 @@ $('openSettings').onclick = () => {
   let theme = state.settings.theme || 'dark';
   openModal(`
     <h3>Настройки</h3>
+    <label class="f">Ник — так тебя увидит администратор</label>
+    <input type="text" id="stNick" maxlength="40" value="${esc(state.settings.nick || '')}" placeholder="${esc(TG_NAME || 'Например: DJ Joy')}">
     <label class="f">Тема</label>
     <div class="seg" id="stTheme">
       <button data-v="dark">Тёмная</button>
       <button data-v="light">Светлая</button>
     </div>
+    ${TG_USER ? `
+    <label class="f">Твой Telegram ID (нужен, чтобы выдать права администратора)</label>
+    <div class="row"><b class="spacer" style="font-size:17px">${TG_USER}</b><button class="btn small" id="stCopyId">Скопировать</button></div>` : ''}
     <div class="actions">
       <button class="btn" id="stCancel">Отмена</button>
       <button class="btn primary" id="stSave">Сохранить</button>
@@ -422,9 +633,11 @@ $('openSettings').onclick = () => {
   };
   setTheme(theme);
   $('stTheme').querySelectorAll('button').forEach(b => b.onclick = () => setTheme(b.dataset.v));
+  if ($('stCopyId')) $('stCopyId').onclick = () => copyText(TG_USER);
   $('stCancel').onclick = closeModal;
   $('stSave').onclick = () => {
     state.settings.theme = theme;
+    state.settings.nick = $('stNick').value.trim();
     save();
     closeModal();
     toast('Настройки сохранены');
@@ -432,8 +645,14 @@ $('openSettings').onclick = () => {
 };
 
 function renderAll() {
-  renderCalendar();
-  renderSets();
+  $('monthTitle').textContent = `${MONTHS[view.m]} ${view.y}`;
+  if (adminOpen) {
+    renderAdmin();
+  } else {
+    renderCalendar();
+    renderSets();
+    renderServerStatus();
+  }
 }
 
 // ---------- Синхронизация через Telegram ----------
@@ -441,7 +660,6 @@ function renderAll() {
 // одинаковый на всех устройствах одного аккаунта. В одном ключе — не больше 4096 символов,
 // поэтому данные режутся на куски. Каждая запись идёт под новым «поколением» ключей,
 // а мета-ключ переключается на него в самом конце: недописанная запись не портит облако.
-const tg = window.Telegram && window.Telegram.WebApp;
 const cloud = tg && tg.initData && tg.isVersionAtLeast && tg.isVersionAtLeast('6.9') ? tg.CloudStorage : null;
 const CLOUD_META = 'mdj_meta';
 const CLOUD_CHUNK = 4000;
@@ -486,7 +704,7 @@ function cloudPushSoon() {
   }, 800);
 }
 
-// Первая синхронизация на устройстве объединяет его сеты с облаком, чтобы ничего не потерять
+// Первая синхронизация на устройстве объединяет его данные с облаком, чтобы ничего не потерять
 function mergeStates(a, b) {
   const [newer, older] = (a.updatedAt || 0) >= (b.updatedAt || 0) ? [a, b] : [b, a];
   const res = JSON.parse(JSON.stringify(newer));
@@ -494,6 +712,7 @@ function mergeStates(a, b) {
     const all = new Set([...(res.sets[ds] || []), ...older.sets[ds]]);
     res.sets[ds] = slotsFor(ds).filter(s => all.has(s));
   }
+  if (!res.settings.nick && older.settings && older.settings.nick) res.settings.nick = older.settings.nick;
   return res;
 }
 
@@ -523,6 +742,7 @@ async function cloudPull() {
 }
 
 applyTheme();
+setAdmin(isAdminUser);
 renderAll();
 
 if (tg) {
@@ -537,9 +757,13 @@ if (tg) {
   fixControls();
   if (tg.onEvent) ['fullscreenChanged', 'contentSafeAreaChanged', 'safeAreaChanged'].forEach(ev => tg.onEvent(ev, fixControls));
 }
-cloudPull();
+cloudPull().then(serverHello);
 // Вернулись в приложение (например, после правок на другом устройстве) — подтягиваем свежие данные
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') cloudPull(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  cloudPull().then(serverHello);
+  if (adminOpen) loadAdmin();
+});
 
 // Установка на экран «Домой»: офлайн-режим и просьба не удалять данные
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
