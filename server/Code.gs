@@ -14,6 +14,8 @@ const MAX_AGE_SEC = 7 * 24 * 3600; // подпись Telegram действите
 const ALL_SLOTS = ['21:00–00:00', '00:00–03:00', '03:00–06:00',
   '20:00–22:00', '22:00–00:00', '00:00–02:00', '02:00–04:00', '04:00–06:00', '06:00–09:00'];
 const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+const BUSY_LABEL = 'занят весь день';
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Проверка, что скрипт опубликован: откройте ссылку в браузере
 function doGet() {
@@ -36,7 +38,7 @@ function handle(req, user) {
   const admin = isAdmin(user.id);
   if (req.action === 'hello') return { ok: true, admin };
   if (req.action === 'save') {
-    saveDj(user, req.nick, req.sets);
+    saveDj(user, req.nick, req.sets, req.busy);
     return { ok: true, admin };
   }
   if (req.action === 'admin') {
@@ -100,22 +102,29 @@ const slotsSheet = () => sheet(SLOTS_SHEET, ['Дата', 'День', 'Слот',
 function cleanSets(sets) {
   const res = {};
   Object.keys(sets || {}).slice(0, 1000).forEach(ds => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(ds) || !Array.isArray(sets[ds])) return;
+    if (!DATE_RE.test(ds) || !Array.isArray(sets[ds])) return;
     const slots = sets[ds].filter(s => ALL_SLOTS.indexOf(s) >= 0);
     if (slots.length) res[ds] = slots;
   });
   return res;
 }
 
-function saveDj(user, nick, sets) {
+// Даты «занят весь день»; день не может быть одновременно свободным и занятым
+function cleanBusy(busy, sets) {
+  return (Array.isArray(busy) ? busy : []).slice(0, 1000)
+    .filter((ds, i, all) => DATE_RE.test(ds) && !sets[ds] && all.indexOf(ds) === i).sort();
+}
+
+function saveDj(user, nick, sets, busy) {
   const lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
     const id = String(user.id);
     const clean = cleanSets(sets);
+    const off = cleanBusy(busy, clean);
     const tgName = [user.first_name, user.last_name].filter(Boolean).join(' ');
     const name = String(nick || '').trim().slice(0, 40) || tgName || id;
-    const row = [id, name, tgName, user.username ? '@' + user.username : '', new Date(), JSON.stringify(clean)];
+    const row = [id, name, tgName, user.username ? '@' + user.username : '', new Date(), JSON.stringify({ sets: clean, busy: off })];
 
     // Лист «Диджеи»: одна строка на диджея
     const dj = djSheet();
@@ -128,10 +137,9 @@ function saveDj(user, nick, sets) {
     const sl = slotsSheet();
     const old = sl.getLastRow() > 1 ? sl.getRange(2, 1, sl.getLastRow() - 1, 5).getDisplayValues() : [];
     const rows = old.filter(r => r[4] !== id);
-    Object.keys(clean).forEach(ds => clean[ds].forEach(slot => {
-      const d = new Date(ds + 'T12:00:00');
-      rows.push([ds, WEEKDAYS[d.getDay()], slot, name, id]);
-    }));
+    const day = ds => WEEKDAYS[new Date(ds + 'T12:00:00').getDay()];
+    Object.keys(clean).forEach(ds => clean[ds].forEach(slot => rows.push([ds, day(ds), slot, name, id])));
+    off.forEach(ds => rows.push([ds, day(ds), BUSY_LABEL, name, id]));
     rows.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : ALL_SLOTS.indexOf(a[2]) - ALL_SLOTS.indexOf(b[2]));
     if (sl.getLastRow() > 1) sl.getRange(2, 1, sl.getLastRow() - 1, 5).clearContent();
     if (rows.length) {
@@ -150,8 +158,13 @@ function readDjs() {
   const res = [];
   dj.getRange(2, 1, dj.getLastRow() - 1, 6).getValues().forEach(r => {
     if (!r[0]) return;
-    let sets = {};
-    try { sets = cleanSets(JSON.parse(r[5] || '{}')); } catch (e) {} // строку поправили руками — не ломаем всю сводку
+    let sets = {}, busy = {};
+    try {
+      const data = JSON.parse(r[5] || '{}');
+      // старый формат — только слоты, новый — { sets, busy }
+      sets = cleanSets(data.sets || (data.busy ? {} : data));
+      cleanBusy(data.busy, sets).forEach(ds => busy[ds] = true);
+    } catch (e) {} // строку поправили руками — не ломаем всю сводку
     res.push({
       id: String(r[0]),
       nick: String(r[1]),
@@ -159,6 +172,7 @@ function readDjs() {
       username: String(r[3]),
       updated: r[4] instanceof Date ? r[4].getTime() : 0,
       sets,
+      busy,
     });
   });
   return res;

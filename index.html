@@ -92,6 +92,14 @@
   .cell.today .num { color: var(--accent); }
   .slot-tag { font-size: 9.5px; line-height: 1.3; background: var(--accent); color: var(--on-accent); border-radius: 4px;
     padding: 1px 1px; white-space: nowrap; overflow: hidden; text-align: center; letter-spacing: -.3px; font-weight: 700; }
+  .cell.busy { background: rgba(239,68,68,.10); border-color: var(--danger); }
+  .busy-tag { font-size: 9.5px; line-height: 1.3; background: var(--danger); color: #fff; border-radius: 4px;
+    padding: 1px 1px; text-align: center; font-weight: 700; }
+  .busy-toggle { width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 14px; margin-bottom: 12px; border-radius: 12px;
+    background: var(--panel2); border: 1px dashed var(--danger); color: var(--danger); font-size: 16px; font-weight: 700; text-align: left; }
+  .busy-toggle.on { background: var(--danger); border-style: solid; color: #fff; }
+  .slot-btn:disabled { opacity: .35; }
+  .sets-list .t.busy, .slot-line .n.busy { color: var(--danger); }
   .count-tag { margin-top: auto; font-size: 11px; font-weight: 700; color: var(--accent); }
   @media (min-width: 600px) { .cell { min-height: 92px; } .slot-tag { font-size: 12px; } }
   @keyframes slideNext { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
@@ -227,11 +235,12 @@ const TG_USER = TG && TG.id ? String(TG.id) : '';
 const TG_NAME = TG ? [TG.first_name, TG.last_name].filter(Boolean).join(' ') : '';
 const STORAGE_KEY = TG_USER ? `mdjcal.v1.tg${TG_USER}` : 'mdjcal.v1';
 
-const defaultState = () => ({ sets: {}, settings: {} });
+// sets — свободные слоты по датам, busy — даты, когда диджей занят весь день
+const defaultState = () => ({ sets: {}, busy: {}, settings: {} });
 
 // Проверяет и дополняет данные; повреждённые данные — null
 function normalize(data) {
-  if (data && data.sets && typeof data.sets === 'object') return { ...data, settings: { ...data.settings } };
+  if (data && data.sets && typeof data.sets === 'object') return { ...data, busy: { ...data.busy }, settings: { ...data.settings } };
   return null;
 }
 
@@ -345,6 +354,7 @@ function renderGrid(el, cellInner, onPick) {
 
 function renderCalendar() {
   renderGrid($('calendar'), ds => {
+    if (state.busy[ds]) return { cls: 'busy', html: '<div class="busy-tag">занят</div>' };
     const sets = setsOn(ds);
     return { cls: sets.length ? 'has' : '', html: sets.map(s => `<div class="slot-tag">${shortSlot(s)}</div>`).join('') };
   }, openDay);
@@ -353,49 +363,74 @@ function renderCalendar() {
 // ---------- Окно дня: выбор свободного времени ----------
 function openDay(ds) {
   const chosen = new Set(state.sets[ds] || []);
+  let busy = !!state.busy[ds];
   openModal(`
     <h3>${dateLong(ds)}</h3>
     <div class="muted" style="font-size:13px;margin-bottom:12px">${isWeekend(ds) ? 'Выходной' : 'Будний день'} · отметь своё свободное время</div>
+    <button class="busy-toggle" id="dBusy"><span>🚫</span><span>Весь день занят</span></button>
     ${slotsFor(ds).map(s => `
       <button class="slot-btn ${chosen.has(s) ? 'on' : ''}" data-slot="${s}"><span class="box">✓</span>${s}</button>`).join('')}
     <div class="actions">
       <button class="btn" id="dCancel">Отмена</button>
       <button class="btn primary" id="dSave">Сохранить</button>
     </div>`);
+  // Занятый день не может быть одновременно свободным: слоты отключаются
+  const drawBusy = () => {
+    $('dBusy').classList.toggle('on', busy);
+    $('modal').querySelectorAll('.slot-btn').forEach(b => {
+      b.disabled = busy;
+      b.classList.toggle('on', !busy && chosen.has(b.dataset.slot));
+    });
+  };
+  $('dBusy').onclick = () => { busy = !busy; drawBusy(); };
   $('modal').querySelectorAll('.slot-btn').forEach(b => b.onclick = () => {
     const s = b.dataset.slot;
     chosen.has(s) ? chosen.delete(s) : chosen.add(s);
     b.classList.toggle('on', chosen.has(s));
   });
+  drawBusy();
   $('dCancel').onclick = closeModal;
   $('dSave').onclick = () => {
-    if (chosen.size) state.sets[ds] = slotsFor(ds).filter(s => chosen.has(s));
-    else delete state.sets[ds];
+    setDay(ds, busy ? [] : slotsFor(ds).filter(s => chosen.has(s)), busy);
     save();
     closeModal();
   };
 }
 
-// ---------- Моё свободное время за месяц ----------
-function monthDays(sets) {
-  const [from, to] = monthBounds(view.y, view.m);
-  return Object.keys(sets).filter(ds => ds >= from && ds <= to && slotsOf(sets, ds).length).sort()
-    .map(ds => ({ date: ds, slots: slotsOf(sets, ds) }));
+// Записывает день: либо свободные слоты, либо «занят весь день», либо ничего
+function setDay(ds, slots, busy) {
+  if (slots.length && !busy) state.sets[ds] = slots;
+  else delete state.sets[ds];
+  if (busy) state.busy[ds] = true;
+  else delete state.busy[ds];
 }
 
+// ---------- Моё свободное время за месяц ----------
+// Свободные дни месяца; с busy — вместе с занятыми днями (у них busy: true и нет слотов)
+function monthDays(sets, busy) {
+  const [from, to] = monthBounds(view.y, view.m);
+  const free = Object.keys(sets).filter(ds => ds >= from && ds <= to && slotsOf(sets, ds).length)
+    .map(ds => ({ date: ds, slots: slotsOf(sets, ds) }));
+  const off = busy ? Object.keys(busy).filter(ds => ds >= from && ds <= to && busy[ds]).map(ds => ({ date: ds, slots: [], busy: true })) : [];
+  return [...free, ...off].sort((a, b) => a.date < b.date ? -1 : 1);
+}
+
+const dayText = d => d.busy ? 'занят весь день' : d.slots.join(', ');
+
 function renderSets() {
-  const days = monthDays(state.sets);
+  const days = monthDays(state.sets, state.busy);
+  const freeCount = days.filter(d => !d.busy).length;
   const today = todayStr();
-  $('setsTitle').textContent = `Моё свободное время — ${MONTHS[view.m]}${days.length ? ` (${days.length})` : ''}`;
+  $('setsTitle').textContent = `Моё свободное время — ${MONTHS[view.m]}${freeCount ? ` (${freeCount})` : ''}`;
   $('setsList').innerHTML = days.length
     ? `<ul class="sets-list">${days.map(d => `
         <li class="${d.date < today ? 'past' : ''}" data-date="${d.date}">
           <span class="d">${dateShort(d.date)}</span>
-          <span class="t">${d.slots.join(', ')}</span>
+          <span class="t ${d.busy ? 'busy' : ''}">${dayText(d)}</span>
         </li>`).join('')}</ul>`
     : '<div class="empty">В этом месяце свободное время не отмечено. Нажми на день в календаре, чтобы отметить.</div>';
   $('setsList').querySelectorAll('li[data-date]').forEach(li => li.onclick = () => openDay(li.dataset.date));
-  $('copySets').disabled = !days.length;
+  $('copySets').disabled = !freeCount;
 }
 
 $('copySets').onclick = () => {
@@ -427,11 +462,14 @@ function openPeriod() {
     <label class="f">Что отметить</label>
     <div class="seg" id="pMode">
       <button data-v="free">Свободен</button>
-      <button data-v="busy">Занят</button>
+      <button data-v="off">Занят весь день</button>
+      <button data-v="busy">Убрать слоты</button>
     </div>
-    <label class="f">Слоты</label>
-    ${chips('Будни (пн–чт, вс)', WEEKDAY_SLOTS)}
-    ${chips('Выходные (пт, сб)', WEEKEND_SLOTS)}
+    <div id="pSlots">
+      <label class="f">Слоты</label>
+      ${chips('Будни (пн–чт, вс)', WEEKDAY_SLOTS)}
+      ${chips('Выходные (пт, сб)', WEEKEND_SLOTS)}
+    </div>
     <div class="hint muted" id="pHint" style="font-size:13px;margin-top:12px"></div>
     <div class="actions">
       <button class="btn" id="pCancel">Отмена</button>
@@ -448,12 +486,14 @@ function openPeriod() {
     const n = days().length;
     $('pHint').textContent = !n ? 'Проверь даты: «с» должно быть не позже «по».'
       : mode === 'free' ? `Выбранные слоты станут свободными во всех ${n} днях периода. Уже отмеченное останется.`
-      : `Выбранные слоты станут занятыми во всех ${n} днях периода. Остальные отметки не изменятся.`;
+      : mode === 'off' ? `Все ${n} дней периода будут отмечены «занят весь день», свободные слоты в них снимутся.`
+      : `Выбранные слоты станут не свободными во всех ${n} днях периода. Остальные отметки не изменятся.`;
   };
   const setMode = v => {
     mode = v;
     $('pMode').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
-    $('pApply').textContent = v === 'free' ? 'Отметить свободным' : 'Отметить занятым';
+    $('pApply').textContent = v === 'free' ? 'Отметить свободным' : v === 'off' ? 'Отметить занятым' : 'Убрать слоты';
+    $('pSlots').style.display = v === 'off' ? 'none' : '';
     hint();
   };
   setMode('free');
@@ -474,15 +514,19 @@ function openPeriod() {
   $('pApply').onclick = () => {
     const list = days();
     if (!list.length) { toast('Проверь даты периода', true); return; }
-    if (!picked.size) { toast('Выбери хотя бы один слот', true); return; }
+    if (mode !== 'off' && !picked.size) { toast('Выбери хотя бы один слот', true); return; }
     let changed = 0;
     list.forEach(ds => {
-      const cur = new Set(state.sets[ds] || []);
-      const before = cur.size;
-      slotsFor(ds).filter(s => picked.has(s)).forEach(s => mode === 'free' ? cur.add(s) : cur.delete(s));
-      if (cur.size !== before) changed++;
-      if (cur.size) state.sets[ds] = slotsFor(ds).filter(s => cur.has(s));
-      else delete state.sets[ds];
+      const before = JSON.stringify([state.sets[ds], state.busy[ds]]);
+      if (mode === 'off') {
+        setDay(ds, [], true);
+      } else {
+        const cur = new Set(state.sets[ds] || []);
+        slotsFor(ds).filter(s => picked.has(s)).forEach(s => mode === 'free' ? cur.add(s) : cur.delete(s));
+        // отметить свободным — значит, день больше не «занят весь день»
+        setDay(ds, slotsFor(ds).filter(s => cur.has(s)), mode === 'busy' && !!state.busy[ds]);
+      }
+      if (JSON.stringify([state.sets[ds], state.busy[ds]]) !== before) changed++;
     });
     save();
     closeModal();
@@ -543,7 +587,7 @@ async function serverPush() {
   serverState = 'sending';
   renderServerStatus();
   try {
-    const res = await api('save', { nick: nick(), sets: state.sets });
+    const res = await api('save', { nick: nick(), sets: state.sets, busy: Object.keys(state.busy).filter(ds => state.busy[ds]) });
     try { localStorage.setItem(PUSHED_KEY, String(stamp)); } catch (e) {}
     serverState = 'ok';
     setAdmin(res.admin);
@@ -589,7 +633,7 @@ async function loadAdmin() {
   adminLoading = true;
   renderAdmin();
   try {
-    adminData = (await api('admin')).djs;
+    adminData = (await api('admin')).djs.map(dj => ({ ...dj, busy: dj.busy || {} }));
   } catch (e) {
     toast(e.message === 'forbidden' ? 'Нет доступа администратора' : 'Не удалось загрузить данные', true);
     if (e.message === 'forbidden') setAdmin(false);
@@ -606,6 +650,7 @@ const djLabel = dj => esc(dj.nick || dj.tgName || dj.id);
 const freeBySlot = ds => slotsFor(ds).map(slot => ({
   slot, djs: (adminData || []).filter(dj => (dj.sets[ds] || []).includes(slot)),
 }));
+const busyOn = ds => (adminData || []).filter(dj => dj.busy[ds]);
 
 function renderAdmin() {
   if (!adminOpen) return;
@@ -623,12 +668,12 @@ function renderAdmin() {
     return;
   }
   $('adminDjs').innerHTML = djs.length ? djs.map(dj => {
-    const days = monthDays(dj.sets);
+    const days = monthDays(dj.sets, dj.busy);
     return `
       <div class="card">
         <div class="row"><span class="dj-name spacer">${djLabel(dj)}</span><span class="muted" style="font-size:13px">${esc(dj.username)}</span></div>
         ${days.length ? `<ul class="sets-list">${days.map(d => `
-          <li><span class="d">${dateShort(d.date)}</span><span class="t">${d.slots.join(', ')}</span></li>`).join('')}</ul>`
+          <li><span class="d">${dateShort(d.date)}</span><span class="t ${d.busy ? 'busy' : ''}">${dayText(d)}</span></li>`).join('')}</ul>`
           : `<div class="muted" style="margin-top:6px">В ${MONTHS_PREP[view.m]} свободное время не отмечено</div>`}
       </div>`;
   }).join('') : `<div class="empty">${adminLoading ? '' : 'Пока никто не отметил свободное время'}</div>`;
@@ -636,6 +681,7 @@ function renderAdmin() {
 
 function openAdminDay(ds) {
   const lines = freeBySlot(ds);
+  const off = busyOn(ds);
   openModal(`
     <h3>${dateLong(ds)}</h3>
     <div class="muted" style="font-size:13px;margin-bottom:8px">Кто свободен</div>
@@ -644,13 +690,19 @@ function openAdminDay(ds) {
         <span class="s">${l.slot}</span>
         <span class="n ${l.djs.length ? '' : 'none'}">${l.djs.length ? l.djs.map(djLabel).join(', ') : 'никого'}</span>
       </div>`).join('')}
+    ${off.length ? `
+      <div class="slot-line">
+        <span class="s">Заняты весь день</span>
+        <span class="n busy">${off.map(djLabel).join(', ')}</span>
+      </div>` : ''}
     <div class="actions">
       <button class="btn" id="aCopy">Скопировать</button>
       <button class="btn primary" id="aClose">Закрыть</button>
     </div>`);
   $('aClose').onclick = closeModal;
   $('aCopy').onclick = () => copyText(`${dateShort(ds)}:\n` +
-    lines.map(l => `${l.slot} — ${l.djs.length ? l.djs.map(dj => dj.nick || dj.tgName || dj.id).join(', ') : 'никого'}`).join('\n'));
+    lines.map(l => `${l.slot} — ${l.djs.length ? l.djs.map(dj => dj.nick || dj.tgName || dj.id).join(', ') : 'никого'}`).join('\n') +
+    (off.length ? `\nЗаняты весь день — ${off.map(dj => dj.nick || dj.tgName || dj.id).join(', ')}` : ''));
 }
 
 // ---------- Листание месяцев: стрелки и свайпы ----------
@@ -803,10 +855,13 @@ function cloudPushSoon() {
 function mergeStates(a, b) {
   const [newer, older] = (a.updatedAt || 0) >= (b.updatedAt || 0) ? [a, b] : [b, a];
   const res = JSON.parse(JSON.stringify(newer));
+  res.busy = res.busy || {};
   for (const ds in older.sets) {
+    if (res.busy[ds]) continue;
     const all = new Set([...(res.sets[ds] || []), ...older.sets[ds]]);
     res.sets[ds] = slotsFor(ds).filter(s => all.has(s));
   }
+  for (const ds in older.busy || {}) if (older.busy[ds] && !res.sets[ds]) res.busy[ds] = true;
   if (!res.settings.nick && older.settings && older.settings.nick) res.settings.nick = older.settings.nick;
   return res;
 }
