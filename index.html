@@ -213,6 +213,7 @@
       </div>
       <button class="icon-btn" id="adminRefresh" aria-label="Обновить">↻</button>
     </div>
+    <button class="btn primary" id="adminCopyAll" style="width:100%;margin-bottom:12px;padding:11px"></button>
     <div id="adminDates">
       <div class="grid" id="adminWeekdays"></div>
       <div class="grid swipe" id="adminCalendar"></div>
@@ -728,6 +729,7 @@ function renderAdmin() {
   $('adminDjs').style.display = adminMode === 'djs' ? '' : 'none';
   const djs = adminData || [];
   $('adminStatus').textContent = adminLoading ? 'Загружаю…' : adminData ? `Диджеев в списке: ${djs.length}` : '';
+  renderCopyAll();
 
   if (adminMode === 'dates') {
     renderGrid($('adminCalendar'), ds => {
@@ -740,12 +742,57 @@ function renderAdmin() {
     const days = monthDays(dj.sets);
     return `
       <div class="card">
-        <div class="row"><span class="dj-name spacer">${djLabel(dj)}</span><span class="muted" style="font-size:13px">${esc(dj.username)}</span></div>
+        <div class="row">
+          <span class="dj-name spacer">${djLabel(dj)} <span class="muted" style="font-size:13px;font-weight:400">${esc(dj.username)}</span></span>
+          ${days.length ? `<button class="btn small" data-copy-dj="${esc(dj.id)}">Скопировать</button>` : ''}
+        </div>
         ${days.length ? `<ul class="sets-list">${days.map(d => `
           <li><span class="d">${dateShort(d.date)}</span><span class="t">${d.slots.join(', ')}</span></li>`).join('')}</ul>`
           : `<div class="muted" style="margin-top:6px">В ${MONTHS_PREP[view.m]} свободное время не отмечено</div>`}
       </div>`;
   }).join('') : `<div class="empty">${adminLoading ? '' : 'Пока никто не отметил свободное время'}</div>`;
+  $('adminDjs').querySelectorAll('[data-copy-dj]').forEach(b =>
+    b.onclick = () => copyText(djText(djs.find(dj => dj.id === b.dataset.copyDj))));
+}
+
+// ---------- Копирование для админа ----------
+const djPlain = dj => dj.nick || dj.tgName || dj.id;
+const monthTitle = () => `${MONTHS[view.m]} ${view.y}`;
+
+// Свободное время одного диджея за месяц
+function djText(dj) {
+  return `${djPlain(dj)} — свободное время, ${monthTitle()}:\n` +
+    monthDays(dj.sets).map(d => `${dateShort(d.date)} — ${d.slots.join(', ')}`).join('\n');
+}
+
+// Все диджеи: по датам (кто свободен в каждом слоте) или по диджеям
+function allText() {
+  const djs = adminData || [];
+  if (adminMode === 'djs') {
+    const withDays = djs.filter(dj => monthDays(dj.sets).length);
+    const without = djs.filter(dj => !monthDays(dj.sets).length);
+    return `Свободное время диджеев — ${monthTitle()}:\n\n` +
+      withDays.map(dj => `${djPlain(dj)}${dj.username ? ` (${dj.username})` : ''}:\n` +
+        monthDays(dj.sets).map(d => `${dateShort(d.date)} — ${d.slots.join(', ')}`).join('\n')).join('\n\n') +
+      (without.length ? `\n\nНе отметили: ${without.map(djPlain).join(', ')}` : '');
+  }
+  const [from, to] = monthBounds(view.y, view.m);
+  const blocks = [];
+  for (let n = dayNum(from); n <= dayNum(to); n++) {
+    const ds = fromDayNum(n);
+    const lines = freeBySlot(ds).filter(l => l.djs.length).map(l => `${l.slot} — ${l.djs.map(djPlain).join(', ')}`);
+    if (lines.length) blocks.push(`${dateShort(ds)}\n${lines.join('\n')}`);
+  }
+  return `Свободные слоты — ${monthTitle()}:\n\n${blocks.join('\n\n')}`;
+}
+
+$('adminCopyAll').onclick = () => copyText(allText());
+
+// Кнопка «Скопировать всё» подписана по текущему виду и выключена, когда копировать нечего
+function renderCopyAll() {
+  const any = (adminData || []).some(dj => monthDays(dj.sets).length);
+  $('adminCopyAll').textContent = adminMode === 'djs' ? 'Скопировать всё — по диджеям' : 'Скопировать всё — по датам';
+  $('adminCopyAll').disabled = !any;
 }
 
 function openAdminDay(ds) {
