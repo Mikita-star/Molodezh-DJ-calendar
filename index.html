@@ -137,7 +137,19 @@
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 6px 11px; font-size: 13px; }
   .chip.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
-  .period-btn { width: 100%; margin-top: 12px; padding: 12px; font-size: 15px; font-weight: 600; }
+  .tools { margin-top: 12px; }
+  .period-btn { flex: 1; padding: 12px 8px; font-size: 15px; font-weight: 600; }
+  .cell { position: relative; }
+  .cell.picked { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .pick-mark { position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--accent);
+    color: var(--on-accent); font-size: 12px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+  .select-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 12; background: var(--panel); border-top: 1px solid var(--line);
+    padding: 12px 16px calc(12px + var(--bottom-inset)); display: none; box-shadow: 0 -8px 24px rgba(0,0,0,.25); }
+  .select-bar.open { display: block; }
+  .select-bar .inner { max-width: 760px; margin: 0 auto; }
+  .select-bar .btn { flex: 1; padding: 12px 8px; font-weight: 600; }
+  .btn.danger-fill { background: var(--danger); border-color: var(--danger); color: #fff; }
+  body.selecting { padding-bottom: calc(150px + var(--bottom-inset)); }
   .slot-btn { width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 14px; margin-bottom: 8px; border-radius: 12px;
     background: var(--panel2); border: 1px solid var(--line); font-size: 17px; font-weight: 600; text-align: left; }
   .slot-btn .box { width: 22px; height: 22px; border-radius: 6px; border: 2px solid var(--muted); flex: none;
@@ -178,7 +190,10 @@
   <section id="userView">
     <div class="grid" id="weekdays"></div>
     <div class="grid swipe" id="calendar"></div>
-    <button class="btn period-btn" id="openPeriod">Отметить сразу период</button>
+    <div class="row tools">
+      <button class="btn period-btn" id="startSelect">Выбрать дни</button>
+      <button class="btn period-btn" id="openPeriod">Отметить период</button>
+    </div>
     <div class="card swipe" id="setsCard">
       <div class="row" style="margin-bottom:6px">
         <b class="spacer" id="setsTitle"></b>
@@ -206,6 +221,17 @@
     <div class="status" id="adminStatus"></div>
   </section>
 </main>
+
+<div class="select-bar" id="selectBar">
+  <div class="inner">
+    <div class="row"><b class="spacer" id="selCount"></b><button class="btn small" id="selCancel">Отмена</button></div>
+    <div class="muted" style="font-size:13px;margin:4px 0 10px">Нажимай на дни в календаре, затем выбери действие</div>
+    <div class="row">
+      <button class="btn danger-fill" id="selBusy">Занят весь день</button>
+      <button class="btn primary" id="selFree">Свободен</button>
+    </div>
+  </div>
+</div>
 
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
@@ -354,11 +380,53 @@ function renderGrid(el, cellInner, onPick) {
 
 function renderCalendar() {
   renderGrid($('calendar'), ds => {
-    if (state.busy[ds]) return { cls: 'busy', html: '<div class="busy-tag">занят</div>' };
+    const mark = selecting && picked.has(ds) ? '<span class="pick-mark">✓</span>' : '';
+    const pickCls = mark ? ' picked' : '';
+    if (state.busy[ds]) return { cls: 'busy' + pickCls, html: '<div class="busy-tag">занят</div>' + mark };
     const sets = setsOn(ds);
-    return { cls: sets.length ? 'has' : '', html: sets.map(s => `<div class="slot-tag">${shortSlot(s)}</div>`).join('') };
-  }, openDay);
+    return { cls: (sets.length ? 'has' : '') + pickCls, html: sets.map(s => `<div class="slot-tag">${shortSlot(s)}</div>`).join('') + mark };
+  }, ds => selecting ? togglePick(ds) : openDay(ds));
 }
+
+// ---------- Выбор нескольких дней галочками ----------
+let selecting = false;
+const picked = new Set();
+
+function setSelecting(on) {
+  selecting = on;
+  picked.clear();
+  $('selectBar').classList.toggle('open', on);
+  document.body.classList.toggle('selecting', on);
+  $('startSelect').textContent = on ? 'Выбор дней…' : 'Выбрать дни';
+  renderSelectBar();
+  renderCalendar();
+}
+
+function togglePick(ds) {
+  picked.has(ds) ? picked.delete(ds) : picked.add(ds);
+  renderSelectBar();
+  renderCalendar();
+}
+
+function renderSelectBar() {
+  $('selCount').textContent = `Выбрано дней: ${picked.size}`;
+  $('selBusy').disabled = $('selFree').disabled = !picked.size;
+}
+
+// Занят — день целиком закрыт; свободен — открыты все слоты этого дня
+function applyPicked(busy) {
+  const n = picked.size;
+  picked.forEach(ds => setDay(ds, busy ? [] : slotsFor(ds), busy));
+  setSelecting(false);
+  save();
+  toast(busy ? `Отмечено занятыми: ${n}` : `Отмечено свободными: ${n}`);
+}
+
+$('startSelect').onclick = () => setSelecting(!selecting);
+$('selCancel').onclick = () => setSelecting(false);
+$('selBusy').onclick = () => applyPicked(true);
+$('selFree').onclick = () => applyPicked(false);
+
 
 // ---------- Окно дня: выбор свободного времени ----------
 function openDay(ds) {
@@ -587,7 +655,8 @@ async function serverPush() {
   serverState = 'sending';
   renderServerStatus();
   try {
-    const res = await api('save', { nick: nick(), sets: state.sets, busy: Object.keys(state.busy).filter(ds => state.busy[ds]) });
+    // Админу уходит только свободное время; занятые дни остаются в личном календаре
+    const res = await api('save', { nick: nick(), sets: state.sets });
     try { localStorage.setItem(PUSHED_KEY, String(stamp)); } catch (e) {}
     serverState = 'ok';
     setAdmin(res.admin);
@@ -620,6 +689,7 @@ function setAdmin(v) {
 }
 
 function toggleAdmin(open = !adminOpen) {
+  if (selecting) setSelecting(false);
   adminOpen = open;
   $('userView').style.display = open ? 'none' : '';
   $('adminView').style.display = open ? '' : 'none';
@@ -633,7 +703,7 @@ async function loadAdmin() {
   adminLoading = true;
   renderAdmin();
   try {
-    adminData = (await api('admin')).djs.map(dj => ({ ...dj, busy: dj.busy || {} }));
+    adminData = (await api('admin')).djs;
   } catch (e) {
     toast(e.message === 'forbidden' ? 'Нет доступа администратора' : 'Не удалось загрузить данные', true);
     if (e.message === 'forbidden') setAdmin(false);
@@ -650,7 +720,6 @@ const djLabel = dj => esc(dj.nick || dj.tgName || dj.id);
 const freeBySlot = ds => slotsFor(ds).map(slot => ({
   slot, djs: (adminData || []).filter(dj => (dj.sets[ds] || []).includes(slot)),
 }));
-const busyOn = ds => (adminData || []).filter(dj => dj.busy[ds]);
 
 function renderAdmin() {
   if (!adminOpen) return;
@@ -668,12 +737,12 @@ function renderAdmin() {
     return;
   }
   $('adminDjs').innerHTML = djs.length ? djs.map(dj => {
-    const days = monthDays(dj.sets, dj.busy);
+    const days = monthDays(dj.sets);
     return `
       <div class="card">
         <div class="row"><span class="dj-name spacer">${djLabel(dj)}</span><span class="muted" style="font-size:13px">${esc(dj.username)}</span></div>
         ${days.length ? `<ul class="sets-list">${days.map(d => `
-          <li><span class="d">${dateShort(d.date)}</span><span class="t ${d.busy ? 'busy' : ''}">${dayText(d)}</span></li>`).join('')}</ul>`
+          <li><span class="d">${dateShort(d.date)}</span><span class="t">${d.slots.join(', ')}</span></li>`).join('')}</ul>`
           : `<div class="muted" style="margin-top:6px">В ${MONTHS_PREP[view.m]} свободное время не отмечено</div>`}
       </div>`;
   }).join('') : `<div class="empty">${adminLoading ? '' : 'Пока никто не отметил свободное время'}</div>`;
@@ -681,7 +750,6 @@ function renderAdmin() {
 
 function openAdminDay(ds) {
   const lines = freeBySlot(ds);
-  const off = busyOn(ds);
   openModal(`
     <h3>${dateLong(ds)}</h3>
     <div class="muted" style="font-size:13px;margin-bottom:8px">Кто свободен</div>
@@ -690,19 +758,13 @@ function openAdminDay(ds) {
         <span class="s">${l.slot}</span>
         <span class="n ${l.djs.length ? '' : 'none'}">${l.djs.length ? l.djs.map(djLabel).join(', ') : 'никого'}</span>
       </div>`).join('')}
-    ${off.length ? `
-      <div class="slot-line">
-        <span class="s">Заняты весь день</span>
-        <span class="n busy">${off.map(djLabel).join(', ')}</span>
-      </div>` : ''}
     <div class="actions">
       <button class="btn" id="aCopy">Скопировать</button>
       <button class="btn primary" id="aClose">Закрыть</button>
     </div>`);
   $('aClose').onclick = closeModal;
   $('aCopy').onclick = () => copyText(`${dateShort(ds)}:\n` +
-    lines.map(l => `${l.slot} — ${l.djs.length ? l.djs.map(dj => dj.nick || dj.tgName || dj.id).join(', ') : 'никого'}`).join('\n') +
-    (off.length ? `\nЗаняты весь день — ${off.map(dj => dj.nick || dj.tgName || dj.id).join(', ')}` : ''));
+    lines.map(l => `${l.slot} — ${l.djs.length ? l.djs.map(dj => dj.nick || dj.tgName || dj.id).join(', ') : 'никого'}`).join('\n'));
 }
 
 // ---------- Листание месяцев: стрелки и свайпы ----------
