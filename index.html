@@ -149,7 +149,7 @@
   .select-bar .inner { max-width: 760px; margin: 0 auto; }
   .select-bar .btn { flex: 1; padding: 12px 8px; font-weight: 600; }
   .btn.danger-fill { background: var(--danger); border-color: var(--danger); color: #fff; }
-  body.selecting { padding-bottom: calc(150px + var(--bottom-inset)); }
+  body.selecting { padding-bottom: calc(200px + var(--bottom-inset)); }
   .slot-btn { width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 14px; margin-bottom: 8px; border-radius: 12px;
     background: var(--panel2); border: 1px solid var(--line); font-size: 17px; font-weight: 600; text-align: left; }
   .slot-btn .box { width: 22px; height: 22px; border-radius: 6px; border: 2px solid var(--muted); flex: none;
@@ -230,6 +230,9 @@
     <div class="row">
       <button class="btn danger-fill" id="selBusy">Занят весь день</button>
       <button class="btn primary" id="selFree">Свободен</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn" id="selClear">Снять все отметки</button>
     </div>
   </div>
 </div>
@@ -411,22 +414,23 @@ function togglePick(ds) {
 
 function renderSelectBar() {
   $('selCount').textContent = `Выбрано дней: ${picked.size}`;
-  $('selBusy').disabled = $('selFree').disabled = !picked.size;
+  $('selBusy').disabled = $('selFree').disabled = $('selClear').disabled = !picked.size;
 }
 
-// Занят — день целиком закрыт; свободен — открыты все слоты этого дня
-function applyPicked(busy) {
+// busy — день целиком закрыт; free — открыты все слоты; clear — без отметок
+function applyPicked(mode) {
   const n = picked.size;
-  picked.forEach(ds => setDay(ds, busy ? [] : slotsFor(ds), busy));
+  picked.forEach(ds => setDay(ds, mode === 'free' ? slotsFor(ds) : [], mode === 'busy'));
   setSelecting(false);
   save();
-  toast(busy ? `Отмечено занятыми: ${n}` : `Отмечено свободными: ${n}`);
+  toast({ busy: `Отмечено занятыми: ${n}`, free: `Отмечено свободными: ${n}`, clear: `Отметки сняты: ${n}` }[mode]);
 }
 
 $('startSelect').onclick = () => setSelecting(!selecting);
 $('selCancel').onclick = () => setSelecting(false);
-$('selBusy').onclick = () => applyPicked(true);
-$('selFree').onclick = () => applyPicked(false);
+$('selBusy').onclick = () => applyPicked('busy');
+$('selFree').onclick = () => applyPicked('free');
+$('selClear').onclick = () => applyPicked('clear');
 
 
 // ---------- Окно дня: выбор свободного времени ----------
