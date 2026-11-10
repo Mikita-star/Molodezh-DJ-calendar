@@ -124,7 +124,12 @@
   @media (min-width: 600px) { .overlay { align-items: center; } .modal { border-radius: 18px; } }
   .modal h3 { margin: 0 0 4px; font-size: 18px; }
   label.f { display: block; margin: 14px 0 6px; font-size: 13px; color: var(--muted); }
-  input[type=text] { width: 100%; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-height: 42px; }
+  input[type=text], input[type=date] { width: 100%; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-height: 42px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 6px 11px; font-size: 13px; }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .period-btn { width: 100%; margin-top: 12px; padding: 12px; font-size: 15px; font-weight: 600; }
   .slot-btn { width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 14px; margin-bottom: 8px; border-radius: 12px;
     background: var(--panel2); border: 1px solid var(--line); font-size: 17px; font-weight: 600; text-align: left; }
   .slot-btn .box { width: 22px; height: 22px; border-radius: 6px; border: 2px solid var(--muted); flex: none;
@@ -165,6 +170,7 @@
   <section id="userView">
     <div class="grid" id="weekdays"></div>
     <div class="grid swipe" id="calendar"></div>
+    <button class="btn period-btn" id="openPeriod">Отметить сразу период</button>
     <div class="card swipe" id="setsCard">
       <div class="row" style="margin-bottom:6px">
         <b class="spacer" id="setsTitle"></b>
@@ -396,6 +402,94 @@ $('copySets').onclick = () => {
   const days = monthDays(state.sets);
   copyText(`Моё свободное время — ${MONTHS[view.m]} ${view.y}:\n` + days.map(d => `${dateShort(d.date)} — ${d.slots.join(', ')}`).join('\n'));
 };
+
+// ---------- Отметить сразу период ----------
+// «Свободен» добавляет выбранные слоты ко всем дням периода, «Занят» убирает только их —
+// так можно отметить весь месяц свободным, а потом снять занятые дни
+function openPeriod() {
+  const [mFrom, mTo] = monthBounds(view.y, view.m);
+  const today = todayStr();
+  let mode = 'free';
+  const picked = new Set([...WEEKDAY_SLOTS, ...WEEKEND_SLOTS]);
+  const chips = (title, slots) => `
+    <div class="muted" style="font-size:12px;margin:8px 0 4px">${title}</div>
+    <div class="chips">${slots.map(s => `<button class="chip on" data-slot="${s}">${s}</button>`).join('')}</div>`;
+  openModal(`
+    <h3>Отметить сразу период</h3>
+    <div class="chips" style="margin-top:10px">
+      <button class="chip" data-q="month">Весь ${MONTHS[view.m]}</button>
+      <button class="chip" data-q="rest">С сегодня до конца месяца</button>
+    </div>
+    <div class="two">
+      <div><label class="f">С</label><input type="date" id="pFrom" value="${mFrom < today && today <= mTo ? today : mFrom}"></div>
+      <div><label class="f">По</label><input type="date" id="pTo" value="${mTo}"></div>
+    </div>
+    <label class="f">Что отметить</label>
+    <div class="seg" id="pMode">
+      <button data-v="free">Свободен</button>
+      <button data-v="busy">Занят</button>
+    </div>
+    <label class="f">Слоты</label>
+    ${chips('Будни (пн–чт, вс)', WEEKDAY_SLOTS)}
+    ${chips('Выходные (пт, сб)', WEEKEND_SLOTS)}
+    <div class="hint muted" id="pHint" style="font-size:13px;margin-top:12px"></div>
+    <div class="actions">
+      <button class="btn" id="pCancel">Отмена</button>
+      <button class="btn primary" id="pApply">Применить</button>
+    </div>`);
+  const days = () => {
+    const from = $('pFrom').value, to = $('pTo').value;
+    if (!from || !to || from > to) return [];
+    const res = [];
+    for (let n = dayNum(from); n <= dayNum(to); n++) res.push(fromDayNum(n));
+    return res;
+  };
+  const hint = () => {
+    const n = days().length;
+    $('pHint').textContent = !n ? 'Проверь даты: «с» должно быть не позже «по».'
+      : mode === 'free' ? `Выбранные слоты станут свободными во всех ${n} днях периода. Уже отмеченное останется.`
+      : `Выбранные слоты станут занятыми во всех ${n} днях периода. Остальные отметки не изменятся.`;
+  };
+  const setMode = v => {
+    mode = v;
+    $('pMode').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+    $('pApply').textContent = v === 'free' ? 'Отметить свободным' : 'Отметить занятым';
+    hint();
+  };
+  setMode('free');
+  $('pMode').querySelectorAll('button').forEach(b => b.onclick = () => setMode(b.dataset.v));
+  $('modal').querySelectorAll('.chip[data-slot]').forEach(c => c.onclick = () => {
+    const s = c.dataset.slot;
+    picked.has(s) ? picked.delete(s) : picked.add(s);
+    c.classList.toggle('on', picked.has(s));
+  });
+  $('modal').querySelectorAll('.chip[data-q]').forEach(c => c.onclick = () => {
+    $('pFrom').value = c.dataset.q === 'rest' && mFrom <= today && today <= mTo ? today : mFrom;
+    $('pTo').value = mTo;
+    hint();
+  });
+  $('pFrom').oninput = hint;
+  $('pTo').oninput = hint;
+  $('pCancel').onclick = closeModal;
+  $('pApply').onclick = () => {
+    const list = days();
+    if (!list.length) { toast('Проверь даты периода', true); return; }
+    if (!picked.size) { toast('Выбери хотя бы один слот', true); return; }
+    let changed = 0;
+    list.forEach(ds => {
+      const cur = new Set(state.sets[ds] || []);
+      const before = cur.size;
+      slotsFor(ds).filter(s => picked.has(s)).forEach(s => mode === 'free' ? cur.add(s) : cur.delete(s));
+      if (cur.size !== before) changed++;
+      if (cur.size) state.sets[ds] = slotsFor(ds).filter(s => cur.has(s));
+      else delete state.sets[ds];
+    });
+    save();
+    closeModal();
+    toast(changed ? `Готово: изменено дней — ${changed}` : 'Ничего не изменилось');
+  };
+}
+$('openPeriod').onclick = openPeriod;
 
 // ---------- Отправка в общее хранилище ----------
 // Хранилище проверяет подпись Telegram (initData), поэтому отправлять можно только из бота
