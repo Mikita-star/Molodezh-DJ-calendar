@@ -190,6 +190,9 @@
   .edit-row .times { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
   .edit-row .who { display: flex; align-items: center; gap: 6px; }
   .edit-row input { flex: 1; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-height: 38px; }
+  .edit-row select { flex: 1; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+    min-height: 38px; font: inherit; color: inherit; }
+  .edit-row .link { background: none; border: 0; padding: 2px 0 6px; color: var(--accent); font-size: 13px; font-weight: 600; }
   .edit-row .x { width: 38px; height: 38px; flex: none; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); color: var(--danger); font-weight: 700; }
   .slot-btn { width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 14px; margin-bottom: 8px; border-radius: 12px;
     background: var(--panel2); border: 1px solid var(--line); font-size: 17px; font-weight: 600; text-align: left; }
@@ -1227,20 +1230,39 @@ async function openScheduleManager() {
   const original = new Set(schedule.filter(inMonth).map(e => e.date));
   const days = new Set(original);
   let seq = 0;
+  // Сет со временем не из слотов дня сразу открывается в ручном режиме
+  const isSlot = r => slotsFor(r.date).includes(`${r.start}–${r.end}`);
   const toRow = e => {
     const t = (e.time || '').match(TIME_RE);
-    return { k: ++seq, date: e.date, start: t ? `${pad(t[1])}:${t[2]}` : '', end: t ? `${pad(t[3])}:${t[4]}` : '', nick: e.nick || '' };
+    const r = { k: ++seq, date: e.date, start: t ? `${pad(t[1])}:${t[2]}` : '', end: t ? `${pad(t[3])}:${t[4]}` : '', nick: e.nick || '' };
+    r.manual = !!r.start && !isSlot(r);
+    return r;
   };
+  const newRow = ds => ({ k: ++seq, date: ds, start: '', end: '', nick: '', manual: false });
   let rows = schedule.filter(inMonth).map(toRow);
   const nickOptions = [...new Set((adminData || []).map(dj => dj.nick || dj.tgName).filter(Boolean))].sort();
 
-  const rowHtml = r => `
-    <div class="edit-row" data-k="${r.k}">
+  const slotSelect = r => {
+    const cur = `${r.start}–${r.end}`;
+    return `
+      <div class="times">
+        <select data-slot aria-label="Время сета">
+          <option value="">Выбери время</option>
+          ${slotsFor(r.date).map(sl => `<option value="${sl}" ${sl === cur ? 'selected' : ''}>${sl}</option>`).join('')}
+        </select>
+      </div>
+      <button class="link" data-manual="${r.k}">Добавить время вручную</button>`;
+  };
+  const manualTimes = r => `
       <div class="times">
         <input type="time" data-f="start" value="${esc(r.start)}" aria-label="Начало">
         <span class="muted">–</span>
         <input type="time" data-f="end" value="${esc(r.end)}" aria-label="Конец">
       </div>
+      <button class="link" data-slots="${r.k}">Выбрать из слотов</button>`;
+  const rowHtml = r => `
+    <div class="edit-row" data-k="${r.k}">
+      ${r.manual ? manualTimes(r) : slotSelect(r)}
       <div class="who">
         <input type="text" list="djOptions" data-f="nick" value="${esc(r.nick)}" placeholder="Ник диджея" maxlength="40">
         <span class="warn-tag" data-warn style="${!r.nick || matchDj(r.nick) ? 'display:none' : ''}">⚠</span>
@@ -1275,19 +1297,33 @@ async function openScheduleManager() {
       r[inp.dataset.f] = inp.value;
       if (inp.dataset.f === 'nick') row.querySelector('[data-warn]').style.display = !r.nick.trim() || matchDj(r.nick) ? 'none' : '';
     });
+    $('modal').querySelectorAll('[data-slot]').forEach(sel => sel.onchange = () => {
+      const r = rows.find(x => x.k === Number(sel.closest('.edit-row').dataset.k));
+      const t = sel.value.match(TIME_RE);
+      r.start = t ? `${pad(t[1])}:${t[2]}` : '';
+      r.end = t ? `${pad(t[3])}:${t[4]}` : '';
+    });
+    const byKey = k => rows.find(x => x.k === Number(k));
+    $('modal').querySelectorAll('[data-manual]').forEach(b => b.onclick = () => { byKey(b.dataset.manual).manual = true; draw(); });
+    $('modal').querySelectorAll('[data-slots]').forEach(b => b.onclick = () => {
+      const r = byKey(b.dataset.slots);
+      r.manual = false;
+      if (!isSlot(r)) { r.start = ''; r.end = ''; } // ручное время не из слотов — выбирают заново
+      draw();
+    });
     $('modal').querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
       rows = rows.filter(r => r.k !== Number(b.dataset.del));
       draw();
     });
     $('modal').querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
-      rows.push({ k: ++seq, date: b.dataset.add, start: '', end: '', nick: '' });
+      rows.push(newRow(b.dataset.add));
       draw();
     });
     $('mgAddDay').onclick = () => {
       const ds = $('mgDate').value;
       if (!ds) return;
       days.add(ds);
-      if (!rows.some(r => r.date === ds)) rows.push({ k: ++seq, date: ds, start: '', end: '', nick: '' });
+      if (!rows.some(r => r.date === ds)) rows.push(newRow(ds));
       draw();
     };
     $('mgCancel').onclick = closeModal;
