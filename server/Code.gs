@@ -1,6 +1,7 @@
 /**
  * Хранилище для «Молодежь DJ календарь».
- * Диджеи присылают сюда своё свободное время, администраторы получают сводку.
+ * Диджеи присылают сюда своё свободное время, администраторы получают сводку
+ * и публикуют расписание, которое видят все диджеи.
  * Всё хранится в Google Таблице, к которой привязан этот скрипт.
  *
  * Свойства скрипта (Настройки проекта → Свойства скрипта):
@@ -10,6 +11,7 @@
 
 const DJ_SHEET = 'Диджеи';
 const SLOTS_SHEET = 'Свободное время';
+const SCHEDULE_SHEET = 'Расписание';
 const MAX_AGE_SEC = 7 * 24 * 3600; // подпись Telegram действительна неделю
 const ALL_SLOTS = ['21:00–00:00', '00:00–03:00', '03:00–06:00',
   '20:00–22:00', '22:00–00:00', '00:00–02:00', '02:00–04:00', '04:00–06:00', '06:00–09:00'];
@@ -44,6 +46,12 @@ function handle(req, user) {
   if (req.action === 'admin') {
     if (!admin) return { ok: false, error: 'forbidden' };
     return { ok: true, admin, djs: readDjs() };
+  }
+  if (req.action === 'schedule') return { ok: true, admin, schedule: readSchedule() };
+  if (req.action === 'publish') {
+    if (!admin) return { ok: false, error: 'forbidden' };
+    publishSchedule(req.dates, req.entries);
+    return { ok: true, admin, schedule: readSchedule() };
   }
   return { ok: false, error: 'unknown action' };
 }
@@ -97,6 +105,18 @@ function sheet(name, headers) {
 
 const djSheet = () => sheet(DJ_SHEET, ['Telegram ID', 'Ник', 'Имя в Telegram', 'Username', 'Обновлено', 'Данные']);
 const slotsSheet = () => sheet(SLOTS_SHEET, ['Дата', 'День', 'Слот', 'Ник', 'Telegram ID']);
+const scheduleSheet = () => sheet(SCHEDULE_SHEET, ['Дата', 'День', 'Время', 'Ник', 'Telegram ID']);
+const weekdayOf = ds => WEEKDAYS[new Date(ds + 'T12:00:00').getDay()];
+
+// Переписывает строки листа ниже заголовка; всё храним как текст, чтобы таблица не переделывала даты
+function writeRows(sh, rows, width) {
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, width).clearContent();
+  if (rows.length) {
+    const range = sh.getRange(2, 1, rows.length, width);
+    range.setNumberFormat('@');
+    range.setValues(rows);
+  }
+}
 
 // Оставляем только правильные даты и известные слоты
 function cleanSets(sets) {
@@ -137,16 +157,10 @@ function saveDj(user, nick, sets, busy) {
     const sl = slotsSheet();
     const old = sl.getLastRow() > 1 ? sl.getRange(2, 1, sl.getLastRow() - 1, 5).getDisplayValues() : [];
     const rows = old.filter(r => r[4] !== id);
-    const day = ds => WEEKDAYS[new Date(ds + 'T12:00:00').getDay()];
-    Object.keys(clean).forEach(ds => clean[ds].forEach(slot => rows.push([ds, day(ds), slot, name, id])));
-    off.forEach(ds => rows.push([ds, day(ds), BUSY_LABEL, name, id]));
+    Object.keys(clean).forEach(ds => clean[ds].forEach(slot => rows.push([ds, weekdayOf(ds), slot, name, id])));
+    off.forEach(ds => rows.push([ds, weekdayOf(ds), BUSY_LABEL, name, id]));
     rows.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : ALL_SLOTS.indexOf(a[2]) - ALL_SLOTS.indexOf(b[2]));
-    if (sl.getLastRow() > 1) sl.getRange(2, 1, sl.getLastRow() - 1, 5).clearContent();
-    if (rows.length) {
-      const range = sl.getRange(2, 1, rows.length, 5);
-      range.setNumberFormat('@'); // даты храним как текст, чтобы таблица их не переделывала
-      range.setValues(rows);
-    }
+    writeRows(sl, rows, 5);
   } finally {
     lock.releaseLock();
   }
@@ -176,4 +190,45 @@ function readDjs() {
     });
   });
   return res;
+}
+
+// ---------- Расписание ----------
+// Ночь до полудня относится к вечеру: 00:00 идёт после 22:00
+function timeKey(t) {
+  const m = String(t).match(/(\d{1,2}):(\d{2})/);
+  if (!m) return 99999;
+  const h = Number(m[1]);
+  return (h < 12 ? h + 24 : h) * 60 + Number(m[2]);
+}
+
+// Публикация заменяет только те даты, что есть в тексте админа; дата без сетов — очищается
+function publishSchedule(dates, entries) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const touched = {};
+    (Array.isArray(dates) ? dates : []).slice(0, 400).forEach(ds => { if (DATE_RE.test(ds)) touched[ds] = true; });
+    const fresh = (Array.isArray(entries) ? entries : []).slice(0, 3000)
+      .filter(e => e && DATE_RE.test(e.date) && String(e.time || '').trim() && String(e.nick || '').trim())
+      .map(e => {
+        touched[e.date] = true;
+        const id = /^\d+$/.test(String(e.id || '')) ? String(e.id) : '';
+        return [e.date, weekdayOf(e.date), String(e.time).trim().slice(0, 20), String(e.nick).trim().slice(0, 40), id];
+      });
+    const sh = scheduleSheet();
+    const old = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, 5).getDisplayValues() : [];
+    const rows = old.filter(r => r[0] && !touched[r[0]]).concat(fresh);
+    rows.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : timeKey(a[2]) - timeKey(b[2]));
+    writeRows(sh, rows, 5);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function readSchedule() {
+  const sh = scheduleSheet();
+  if (sh.getLastRow() < 2) return [];
+  return sh.getRange(2, 1, sh.getLastRow() - 1, 5).getDisplayValues()
+    .filter(r => DATE_RE.test(r[0]) && r[2] && r[3])
+    .map(r => ({ date: r[0], time: r[2], nick: r[3], id: r[4] }));
 }

@@ -58,7 +58,7 @@
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; background: var(--bg); color: var(--text);
     font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-  body { padding-bottom: calc(24px + var(--bottom-inset)); }
+  body { padding-bottom: calc(88px + var(--bottom-inset)); }
   body::before { content: ''; position: fixed; top: 0; left: 0; right: 0; height: var(--top-inset); background: var(--statusbar); z-index: 15; }
   button, input { font: inherit; color: inherit; }
   button { cursor: pointer; }
@@ -157,6 +157,33 @@
   .select-bar .btn { flex: 1; padding: 12px 8px; font-weight: 600; }
   .btn.danger-fill { background: var(--danger); border-color: var(--danger); color: #fff; }
   body.selecting { padding-bottom: calc(200px + var(--bottom-inset)); }
+
+  /* Нижние вкладки */
+  nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; display: flex; background: var(--panel);
+    border-top: 1px solid var(--line); padding-bottom: var(--bottom-inset); }
+  nav.tabs button { flex: 1; background: none; border: 0; padding: 10px 4px 12px; color: var(--muted); font-size: 12px;
+    display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  nav.tabs button svg { width: 22px; height: 22px; }
+  nav.tabs button.active { color: var(--accent); }
+
+  /* Расписание */
+  .sched-day { padding: 10px 0 4px; border-bottom: 1px solid var(--line); }
+  .sched-day:last-child { border-bottom: 0; }
+  .sched-day.past { opacity: .5; }
+  .sched-day .d { font-weight: 700; margin-bottom: 4px; }
+  .sched-row { display: flex; gap: 10px; align-items: center; padding: 6px 8px; margin: 0 -8px; border-radius: 8px; }
+  .sched-row .s { min-width: 104px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .sched-row .n { flex: 1; }
+  .sched-row.mine { background: var(--free-soft); box-shadow: inset 3px 0 0 var(--free); }
+  .sched-row.mine .s, .sched-row.mine .n { color: var(--free); font-weight: 700; }
+  .me-tag { font-size: 11px; font-weight: 800; background: var(--free); color: var(--on-free); border-radius: 999px; padding: 1px 7px; }
+  .warn-tag { font-size: 11px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+  textarea { width: 100%; min-height: 220px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px; font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: inherit; resize: vertical; }
+  .example { background: var(--panel2); border-radius: 10px; padding: 8px 10px; font: 12.5px/1.45 ui-monospace, Menlo, monospace;
+    white-space: pre; overflow-x: auto; margin: 6px 0 0; }
+  .err-line { font-size: 13px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+  .err-line:last-child { border-bottom: 0; }
   .slot-btn { width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 14px; margin-bottom: 8px; border-radius: 12px;
     background: var(--panel2); border: 1px solid var(--line); font-size: 17px; font-weight: 600; text-align: left; }
   .slot-btn .box { width: 22px; height: 22px; border-radius: 6px; border: 2px solid var(--muted); flex: none;
@@ -169,7 +196,7 @@
   .actions { display: flex; gap: 8px; margin-top: 16px; }
   .actions .btn { flex: 1; padding: 12px; }
 
-  .toast { position: fixed; left: 50%; bottom: calc(24px + var(--bottom-inset)); transform: translateX(-50%) translateY(20px);
+  .toast { position: fixed; left: 50%; bottom: calc(84px + var(--bottom-inset)); transform: translateX(-50%) translateY(20px);
     background: var(--green); color: #04140a; font-weight: 600; padding: 10px 18px; border-radius: 999px; opacity: 0;
     transition: .25s; pointer-events: none; z-index: 30; }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -220,7 +247,8 @@
       </div>
       <button class="icon-btn" id="adminRefresh" aria-label="Обновить">↻</button>
     </div>
-    <button class="btn primary" id="adminCopyAll" style="width:100%;margin-bottom:12px;padding:11px"></button>
+    <button class="btn primary" id="adminCopyAll" style="width:100%;margin-bottom:8px;padding:11px"></button>
+    <button class="btn" id="adminSchedule" style="width:100%;margin-bottom:12px;padding:11px;font-weight:600">Создать расписание</button>
     <div id="adminDates">
       <div class="grid" id="adminWeekdays"></div>
       <div class="grid swipe" id="adminCalendar"></div>
@@ -228,7 +256,31 @@
     <div class="swipe" id="adminDjs"></div>
     <div class="status" id="adminStatus"></div>
   </section>
+
+  <!-- Расписание для всех диджеев -->
+  <section id="schedView" style="display:none">
+    <div class="card swipe" id="schedCard">
+      <div class="row" style="margin-bottom:6px">
+        <b class="spacer" id="schedTitle"></b>
+        <button class="icon-btn" id="schedRefresh" aria-label="Обновить">↻</button>
+      </div>
+      <div class="muted" id="schedMine" style="font-size:13px;margin-bottom:4px"></div>
+      <div id="schedList"></div>
+      <div class="status" id="schedStatus"></div>
+    </div>
+  </section>
 </main>
+
+<nav class="tabs" id="tabs">
+  <button class="active" data-tab="cal">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+    Календарь
+  </button>
+  <button data-tab="sched">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+    Расписание
+  </button>
+</nav>
 
 <div class="select-bar" id="selectBar">
   <div class="inner">
@@ -703,12 +755,31 @@ function setAdmin(v) {
 function toggleAdmin(open = !adminOpen) {
   if (selecting) setSelecting(false);
   adminOpen = open;
-  $('userView').style.display = open ? 'none' : '';
-  $('adminView').style.display = open ? '' : 'none';
   $('toggleAdmin').textContent = open ? 'Мой календарь' : 'Админ';
   if (open && !adminData) loadAdmin();
+  showView();
   renderAll();
 }
+
+// ---------- Вкладки «Календарь» и «Расписание» ----------
+let tab = 'cal';
+
+function showView() {
+  $('userView').style.display = !adminOpen && tab === 'cal' ? '' : 'none';
+  $('schedView').style.display = !adminOpen && tab === 'sched' ? '' : 'none';
+  $('adminView').style.display = adminOpen ? '' : 'none';
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', !adminOpen && b.dataset.tab === tab));
+}
+
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
+  if (selecting) setSelecting(false);
+  if (adminOpen) toggleAdmin(false);
+  tab = b.dataset.tab;
+  showView();
+  renderAll();
+  if (tab === 'sched') loadSchedule();
+  window.scrollTo(0, 0);
+});
 $('toggleAdmin').onclick = () => toggleAdmin();
 
 async function loadAdmin() {
@@ -837,7 +908,7 @@ function move(dir) {
   if (view.m < 0) { view.m = 11; view.y--; }
   if (view.m > 11) { view.m = 0; view.y++; }
   renderAll();
-  (adminOpen ? [$('adminCalendar'), $('adminDjs')] : [$('calendar'), $('setsList')]).forEach(el => slide(el, dir));
+  (adminOpen ? [$('adminCalendar'), $('adminDjs')] : tab === 'sched' ? [$('schedList')] : [$('calendar'), $('setsList')]).forEach(el => slide(el, dir));
 }
 
 // Свайп влево — следующий месяц, вправо — предыдущий; на Mac — жест двумя пальцами по трекпаду
@@ -915,12 +986,221 @@ function renderAll() {
   $('monthTitle').textContent = `${MONTHS[view.m]} ${view.y}`;
   if (adminOpen) {
     renderAdmin();
+  } else if (tab === 'sched') {
+    renderSchedule();
   } else {
     renderCalendar();
     renderSets();
     renderServerStatus();
   }
 }
+
+// ---------- Расписание ----------
+const SCHED_KEY = `mdjcal.schedule.tg${TG_USER}`;
+let schedule = (() => { try { return JSON.parse(localStorage.getItem(SCHED_KEY)) || []; } catch (e) { return []; } })();
+let schedLoading = false;
+let schedError = false;
+
+const normNick = s => String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/^@/, '').replace(/\s+/g, ' ').trim();
+// Свой сет — по Telegram ID, а если админ вписал ник без привязки — по совпадению ника
+const isMine = e => e.id ? e.id === TG_USER : !!nick() && normNick(e.nick) === normNick(nick());
+
+function setSchedule(list) {
+  schedule = Array.isArray(list) ? list : [];
+  try { localStorage.setItem(SCHED_KEY, JSON.stringify(schedule)); } catch (e) {}
+}
+
+async function loadSchedule() {
+  if (!serverReady()) { renderSchedule(); return; }
+  schedLoading = true;
+  schedError = false;
+  renderSchedule();
+  try {
+    setSchedule((await api('schedule')).schedule);
+  } catch (e) {
+    schedError = true;
+  }
+  schedLoading = false;
+  renderSchedule();
+}
+$('schedRefresh').onclick = loadSchedule;
+
+function renderSchedule() {
+  if (adminOpen || tab !== 'sched') return;
+  const [from, to] = monthBounds(view.y, view.m);
+  const today = todayStr();
+  const month = schedule.filter(e => e.date >= from && e.date <= to);
+  const dates = [...new Set(month.map(e => e.date))].sort();
+  const mine = month.filter(isMine);
+  $('schedTitle').textContent = `Расписание — ${MONTHS[view.m]}`;
+  $('schedMine').textContent = month.length ? (mine.length
+    ? `Твоих сетов в ${MONTHS_PREP[view.m]}: ${mine.length} — они подсвечены зелёным`
+    : `В ${MONTHS_PREP[view.m]} у тебя сетов нет`) : '';
+  $('schedList').innerHTML = dates.length ? dates.map(ds => `
+    <div class="sched-day ${ds < today ? 'past' : ''}">
+      <div class="d">${dateShort(ds)}</div>
+      ${month.filter(e => e.date === ds).map(e => `
+        <div class="sched-row ${isMine(e) ? 'mine' : ''}">
+          <span class="s">${esc(e.time)}</span>
+          <span class="n">${esc(e.nick)}</span>
+          ${isMine(e) ? '<span class="me-tag">ты</span>' : ''}
+        </div>`).join('')}
+    </div>`).join('')
+    : `<div class="empty">${schedLoading ? 'Загружаю…' : `Расписание на ${MONTHS[view.m]} ещё не опубликовано`}</div>`;
+  $('schedStatus').className = 'status' + (schedError ? ' err' : '');
+  $('schedStatus').textContent = !serverReady()
+    ? 'Расписание обновляется, когда календарь открыт через бота в Telegram.'
+    : schedError ? 'Не удалось обновить расписание — показана последняя загруженная версия.'
+    : schedLoading && dates.length ? 'Обновляю…' : '';
+}
+
+// ---------- Создание расписания (админ) ----------
+const MONTH_KEYS = ['январ', 'феврал', 'март', 'апрел', 'ма', 'июн', 'июл', 'август', 'сентябр', 'октябр', 'ноябр', 'декабр'];
+const MONTH_DATE_RE = /(\d{1,2})\s+(январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр)[а-яё]*/i;
+const NUM_DATE_RE = /(^|[^\d])(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?(?!\d)/;
+const TIME_RE = /(\d{1,2})[:.](\d{2})\s*[-–—−]\s*(\d{1,2})[:.](\d{2})/;
+const WEEKDAY_RE = /(^|[^а-яёa-z])(понедельник|вторник|среда|среду|четверг|пятница|пятницу|суббота|субботу|воскресенье|пн|вт|ср|чт|пт|сб|вс)(?=[^а-яёa-z]|$)/gi;
+const EDGE_RE = /^[\s,.:;|—–−-]+|[\s,.:;|—–−-]+$/g;
+
+// Год не пишут — берём тот, при котором дата ближе всего к месяцу на экране
+function guessYear(m) {
+  if (m - view.m > 6) return view.y - 1;
+  if (view.m - m > 6) return view.y + 1;
+  return view.y;
+}
+
+function validDate(y, m, d) {
+  const t = new Date(y, m, d);
+  return t.getFullYear() === y && t.getMonth() === m && t.getDate() === d ? ymd(y, m, d) : '';
+}
+
+// Ищет дату «14 ноября» или «14.11(.2026)»; возвращает дату и строку без неё
+function findDate(line) {
+  let m = line.match(MONTH_DATE_RE);
+  if (m) {
+    const mi = MONTH_KEYS.findIndex(k => m[2].toLowerCase().startsWith(k));
+    const ds = validDate(guessYear(mi), mi, Number(m[1]));
+    if (ds) return { ds, rest: line.replace(m[0], ' ') };
+  }
+  m = line.match(NUM_DATE_RE);
+  if (m) {
+    const mi = Number(m[3]) - 1;
+    const y = m[4] ? (m[4].length === 2 ? 2000 + Number(m[4]) : Number(m[4])) : guessYear(mi);
+    const ds = mi >= 0 && mi < 12 ? validDate(y, mi, Number(m[2])) : '';
+    if (ds) return { ds, rest: line.replace(m[0], m[1] + ' ') };
+  }
+  return null;
+}
+
+function matchDj(text) {
+  const n = normNick(text);
+  return (adminData || []).find(dj => [dj.nick, dj.tgName, dj.username].some(v => v && normNick(v) === n)) || null;
+}
+
+// Понимает «дата, под ней строки „время — ник“» и «дата время ник» в одной строке
+function parseSchedule(text) {
+  const entries = [], dates = new Set(), errors = [];
+  let cur = null;
+  text.split(/\r?\n/).forEach(raw => {
+    const line = raw.trim();
+    if (!line) return;
+    let rest = line, time = '';
+    const t = rest.match(TIME_RE);
+    if (t) {
+      time = `${pad(t[1])}:${t[2]}–${pad(t[3])}:${t[4]}`;
+      rest = rest.replace(t[0], ' ');
+    }
+    const d = findDate(rest);
+    if (d) { rest = d.rest; cur = d.ds; dates.add(d.ds); }
+    rest = rest.replace(WEEKDAY_RE, '$1').replace(EDGE_RE, '').trim();
+    if (!time) {
+      if (d && !rest) return;               // строка-дата
+      if (/:\s*$/.test(line)) return;       // заголовок вроде «Свободные слоты — ноябрь 2026:»
+      errors.push({ line, why: d ? 'нет времени' : 'не понял строку' });
+      return;
+    }
+    if (!cur) { errors.push({ line, why: 'не указана дата' }); return; }
+    if (/^никого$/i.test(rest)) return;      // строка из «Скопировать всё», где никто не свободен
+    if (!rest) { errors.push({ line, why: 'нет ника' }); return; }
+    rest.split(/\s*,\s*/).filter(Boolean).forEach(nk => {
+      const dj = matchDj(nk);
+      entries.push({ date: cur, time, nick: dj ? (dj.nick || dj.tgName || nk) : nk, id: dj ? dj.id : '', matched: !!dj });
+    });
+  });
+  return { entries, dates: [...dates].sort(), errors };
+}
+
+const SCHED_EXAMPLE = `14 ноября
+20:00–22:00 — DJ Alex
+22:00–00:00 — DJ Joy
+
+15.11 21:00–00:00 DJ Joy`;
+
+async function openScheduleEditor(text = '') {
+  if (!adminData) await loadAdmin();
+  openModal(`
+    <h3>Создать расписание</h3>
+    <div class="muted" style="font-size:13px">Вставь расписание. Можно так — дата, а под ней «время — ник», или одной строкой «дата время ник»:</div>
+    <div class="example">${esc(SCHED_EXAMPLE)}</div>
+    <div class="muted" style="font-size:13px;margin:8px 0">Дни из текста заменят то, что было опубликовано на эти даты. Дата без сетов — очистит день.</div>
+    <textarea id="schText" placeholder="Вставь сюда текст расписания">${esc(text)}</textarea>
+    <div class="actions">
+      <button class="btn" id="schCancel">Отмена</button>
+      <button class="btn primary" id="schCheck">Проверить</button>
+    </div>`);
+  $('schCancel').onclick = closeModal;
+  $('schCheck').onclick = () => {
+    const value = $('schText').value;
+    if (!value.trim()) { toast('Вставь текст расписания', true); return; }
+    openSchedulePreview(value);
+  };
+}
+
+function openSchedulePreview(text) {
+  const { entries, dates, errors } = parseSchedule(text);
+  const unknown = [...new Set(entries.filter(e => !e.matched).map(e => e.nick))];
+  const blocks = dates.map(ds => {
+    const day = entries.filter(e => e.date === ds);
+    return `
+      <div class="sched-day">
+        <div class="d">${dateShort(ds)}</div>
+        ${day.length ? day.map(e => `
+          <div class="sched-row">
+            <span class="s">${esc(e.time)}</span>
+            <span class="n">${esc(e.nick)}</span>
+            ${e.matched ? '' : '<span class="warn-tag">⚠ не найден</span>'}
+          </div>`).join('') : '<div class="muted" style="font-size:13px">день будет очищен</div>'}
+      </div>`;
+  }).join('');
+  openModal(`
+    <h3>Проверь расписание</h3>
+    <div class="muted" style="font-size:13px;margin-bottom:6px">Дней: ${dates.length} · сетов: ${entries.length}</div>
+    ${unknown.length ? `<div class="status err" style="margin:0 0 8px">Не нашёл среди диджеев: ${unknown.map(esc).join(', ')}. Расписание опубликуется, но этим диджеям их сеты не подсветятся — проверь, совпадает ли ник с тем, что у них в настройках.</div>` : ''}
+    ${blocks || '<div class="empty">Не нашёл ни одной даты</div>'}
+    ${errors.length ? `
+      <label class="f">Эти строки не распознаны и не попадут в расписание</label>
+      ${errors.map(e => `<div class="err-line"><b>${esc(e.why)}:</b> ${esc(e.line)}</div>`).join('')}` : ''}
+    <div class="actions">
+      <button class="btn" id="schBack">Назад</button>
+      <button class="btn primary" id="schPublish" ${dates.length ? '' : 'disabled'}>Опубликовать</button>
+    </div>`);
+  $('schBack').onclick = () => openScheduleEditor(text);
+  $('schPublish').onclick = async () => {
+    $('schPublish').disabled = true;
+    $('schPublish').textContent = 'Публикую…';
+    try {
+      const res = await api('publish', { dates, entries: entries.map(({ date, time, nick, id }) => ({ date, time, nick, id })) });
+      setSchedule(res.schedule);
+      closeModal();
+      toast('Расписание опубликовано');
+    } catch (e) {
+      toast(e.message === 'forbidden' ? 'Нет доступа администратора' : 'Не удалось опубликовать', true);
+      $('schPublish').disabled = false;
+      $('schPublish').textContent = 'Опубликовать';
+    }
+  };
+}
+$('adminSchedule').onclick = () => openScheduleEditor();
 
 // ---------- Синхронизация через Telegram ----------
 // Внутри Telegram данные хранятся ещё и в облаке Telegram (CloudStorage), поэтому календарь
@@ -1027,12 +1307,13 @@ if (tg) {
   fixControls();
   if (tg.onEvent) ['fullscreenChanged', 'contentSafeAreaChanged', 'safeAreaChanged'].forEach(ev => tg.onEvent(ev, fixControls));
 }
-cloudPull().then(serverHello);
+cloudPull().then(serverHello).then(() => { if (tab === 'sched') loadSchedule(); });
 // Вернулись в приложение (например, после правок на другом устройстве) — подтягиваем свежие данные
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   cloudPull().then(serverHello);
   if (adminOpen) loadAdmin();
+  if (tab === 'sched') loadSchedule();
 });
 
 // Установка на экран «Домой»: офлайн-режим и просьба не удалять данные
