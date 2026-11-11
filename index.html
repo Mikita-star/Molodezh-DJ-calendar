@@ -184,6 +184,13 @@
     white-space: pre; overflow-x: auto; margin: 6px 0 0; }
   .err-line { font-size: 13px; padding: 4px 0; border-bottom: 1px solid var(--line); }
   .err-line:last-child { border-bottom: 0; }
+  .edit-day { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .edit-day .head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .edit-row { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 8px; margin-bottom: 6px; }
+  .edit-row .times { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .edit-row .who { display: flex; align-items: center; gap: 6px; }
+  .edit-row input { flex: 1; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-height: 38px; }
+  .edit-row .x { width: 38px; height: 38px; flex: none; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); color: var(--danger); font-weight: 700; }
   .slot-btn { width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 14px; margin-bottom: 8px; border-radius: 12px;
     background: var(--panel2); border: 1px solid var(--line); font-size: 17px; font-weight: 600; text-align: left; }
   .slot-btn .box { width: 22px; height: 22px; border-radius: 6px; border: 2px solid var(--muted); flex: none;
@@ -248,7 +255,10 @@
       <button class="icon-btn" id="adminRefresh" aria-label="Обновить">↻</button>
     </div>
     <button class="btn primary" id="adminCopyAll" style="width:100%;margin-bottom:8px;padding:11px"></button>
-    <button class="btn" id="adminSchedule" style="width:100%;margin-bottom:12px;padding:11px;font-weight:600">Создать расписание</button>
+    <div class="row" style="margin-bottom:12px">
+      <button class="btn period-btn" id="adminSchedule">Создать расписание</button>
+      <button class="btn period-btn" id="adminReady">Готовое расписание</button>
+    </div>
     <div id="adminDates">
       <div class="grid" id="adminWeekdays"></div>
       <div class="grid swipe" id="adminCalendar"></div>
@@ -1201,6 +1211,113 @@ function openSchedulePreview(text) {
   };
 }
 $('adminSchedule').onclick = () => openScheduleEditor();
+
+// ---------- Готовое расписание: ручная правка (админ) ----------
+async function openScheduleManager() {
+  if (!adminData) await loadAdmin();
+  try {
+    setSchedule((await api('schedule')).schedule);
+  } catch (e) {
+    toast('Не удалось загрузить расписание', true);
+    return;
+  }
+  const [from, to] = monthBounds(view.y, view.m);
+  const inMonth = e => e.date >= from && e.date <= to;
+  // Даты, что уже были опубликованы: если в них ничего не останется — день очистится
+  const original = new Set(schedule.filter(inMonth).map(e => e.date));
+  const days = new Set(original);
+  let seq = 0;
+  const toRow = e => {
+    const t = (e.time || '').match(TIME_RE);
+    return { k: ++seq, date: e.date, start: t ? `${pad(t[1])}:${t[2]}` : '', end: t ? `${pad(t[3])}:${t[4]}` : '', nick: e.nick || '' };
+  };
+  let rows = schedule.filter(inMonth).map(toRow);
+  const nickOptions = [...new Set((adminData || []).map(dj => dj.nick || dj.tgName).filter(Boolean))].sort();
+
+  const rowHtml = r => `
+    <div class="edit-row" data-k="${r.k}">
+      <div class="times">
+        <input type="time" data-f="start" value="${esc(r.start)}" aria-label="Начало">
+        <span class="muted">–</span>
+        <input type="time" data-f="end" value="${esc(r.end)}" aria-label="Конец">
+      </div>
+      <div class="who">
+        <input type="text" list="djOptions" data-f="nick" value="${esc(r.nick)}" placeholder="Ник диджея" maxlength="40">
+        <span class="warn-tag" data-warn style="${!r.nick || matchDj(r.nick) ? 'display:none' : ''}">⚠</span>
+        <button class="x" data-del="${r.k}" aria-label="Удалить сет">✕</button>
+      </div>
+    </div>`;
+
+  const draw = () => {
+    const sorted = [...days].sort();
+    openModal(`
+      <h3>Готовое расписание — ${MONTHS[view.m]}</h3>
+      <div class="muted" style="font-size:13px">Поменяй время или ник, удали сет ✕ или добавь новый. «Сохранить» сразу покажет изменения всем диджеям. ⚠ — ник не найден среди диджеев.</div>
+      <datalist id="djOptions">${nickOptions.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+      ${sorted.length ? sorted.map(ds => `
+        <div class="edit-day">
+          <div class="head"><b class="spacer">${dateShort(ds)}</b><button class="btn small" data-add="${ds}">+ сет</button></div>
+          ${rows.filter(r => r.date === ds).map(rowHtml).join('') || '<div class="muted" style="font-size:13px">нет сетов — день очистится</div>'}
+        </div>`).join('') : `<div class="empty">На ${MONTHS[view.m]} расписание ещё не опубликовано — добавь день ниже</div>`}
+      <label class="f">Добавить день</label>
+      <div class="row">
+        <input type="date" id="mgDate" value="${from}" min="${from}" max="${to}" style="flex:1">
+        <button class="btn" id="mgAddDay">Добавить</button>
+      </div>
+      <div class="actions">
+        <button class="btn" id="mgCancel">Отмена</button>
+        <button class="btn primary" id="mgSave">Сохранить</button>
+      </div>`);
+    // Ввод сохраняем в rows без перерисовки, чтобы не сбивать курсор
+    $('modal').querySelectorAll('.edit-row input').forEach(inp => inp.oninput = () => {
+      const row = inp.closest('.edit-row');
+      const r = rows.find(x => x.k === Number(row.dataset.k));
+      r[inp.dataset.f] = inp.value;
+      if (inp.dataset.f === 'nick') row.querySelector('[data-warn]').style.display = !r.nick.trim() || matchDj(r.nick) ? 'none' : '';
+    });
+    $('modal').querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+      rows = rows.filter(r => r.k !== Number(b.dataset.del));
+      draw();
+    });
+    $('modal').querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
+      rows.push({ k: ++seq, date: b.dataset.add, start: '', end: '', nick: '' });
+      draw();
+    });
+    $('mgAddDay').onclick = () => {
+      const ds = $('mgDate').value;
+      if (!ds) return;
+      days.add(ds);
+      if (!rows.some(r => r.date === ds)) rows.push({ k: ++seq, date: ds, start: '', end: '', nick: '' });
+      draw();
+    };
+    $('mgCancel').onclick = closeModal;
+    $('mgSave').onclick = publishEdits;
+  };
+
+  const publishEdits = async () => {
+    const bad = rows.find(r => !r.start || !r.end || !r.nick.trim());
+    if (bad) { toast(`${dateShort(bad.date)}: заполни время и ник у каждого сета`, true); return; }
+    const entries = rows.map(r => {
+      const dj = matchDj(r.nick);
+      return { date: r.date, time: `${r.start}–${r.end}`, nick: dj ? (dj.nick || dj.tgName) : r.nick.trim(), id: dj ? dj.id : '' };
+    });
+    const dates = [...new Set([...original, ...days, ...rows.map(r => r.date)])].sort();
+    $('mgSave').disabled = true;
+    $('mgSave').textContent = 'Сохраняю…';
+    try {
+      setSchedule((await api('publish', { dates, entries })).schedule);
+      closeModal();
+      toast('Расписание сохранено');
+    } catch (e) {
+      toast(e.message === 'forbidden' ? 'Нет доступа администратора' : 'Не удалось сохранить', true);
+      $('mgSave').disabled = false;
+      $('mgSave').textContent = 'Сохранить';
+    }
+  };
+
+  draw();
+}
+$('adminReady').onclick = openScheduleManager;
 
 // ---------- Синхронизация через Telegram ----------
 // Внутри Telegram данные хранятся ещё и в облаке Telegram (CloudStorage), поэтому календарь
