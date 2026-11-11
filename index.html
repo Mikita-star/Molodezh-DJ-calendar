@@ -170,7 +170,8 @@
   .sched-day { padding: 10px 0 4px; border-bottom: 1px solid var(--line); }
   .sched-day:last-child { border-bottom: 0; }
   .sched-day.past { opacity: .5; }
-  .sched-day .d { font-weight: 700; margin-bottom: 4px; }
+  .sched-day .d { font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+  .sched-day .d span { flex: 1; }
   .sched-row { display: flex; gap: 10px; align-items: center; padding: 6px 8px; margin: 0 -8px; border-radius: 8px; }
   .sched-row .s { min-width: 104px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .sched-row .n { flex: 1; }
@@ -275,6 +276,7 @@
     <div class="card swipe" id="schedCard">
       <div class="row" style="margin-bottom:6px">
         <b class="spacer" id="schedTitle"></b>
+        <button class="btn primary small" id="schedCopy">Скопировать</button>
         <button class="icon-btn" id="schedRefresh" aria-label="Обновить">↻</button>
       </div>
       <div class="muted" id="schedMine" style="font-size:13px;margin-bottom:4px"></div>
@@ -1051,7 +1053,7 @@ function renderSchedule() {
     : `В ${MONTHS_PREP[view.m]} у тебя сетов нет`) : '';
   $('schedList').innerHTML = dates.length ? dates.map(ds => `
     <div class="sched-day ${ds < today ? 'past' : ''}">
-      <div class="d">${dateShort(ds)}</div>
+      <div class="d"><span>${dateShort(ds)}</span><button class="btn small" data-copy-day="${ds}">Скопировать</button></div>
       ${month.filter(e => e.date === ds).map(e => `
         <div class="sched-row ${isMine(e) ? 'mine' : ''}">
           <span class="s">${esc(e.time)}</span>
@@ -1060,12 +1062,24 @@ function renderSchedule() {
         </div>`).join('')}
     </div>`).join('')
     : `<div class="empty">${schedLoading ? 'Загружаю…' : `Расписание на ${MONTHS[view.m]} ещё не опубликовано`}</div>`;
+  $('schedCopy').disabled = !dates.length;
+  $('schedList').querySelectorAll('[data-copy-day]').forEach(b => b.onclick = () => copyText(schedDayText(b.dataset.copyDay)));
   $('schedStatus').className = 'status' + (schedError ? ' err' : '');
   $('schedStatus').textContent = !serverReady()
     ? 'Расписание обновляется, когда календарь открыт через бота в Telegram.'
     : schedError ? 'Не удалось обновить расписание — показана последняя загруженная версия.'
     : schedLoading && dates.length ? 'Обновляю…' : '';
 }
+
+// Текст расписания: один день или весь месяц на экране
+const schedDayText = ds => `${dateShort(ds)}:\n` +
+  schedule.filter(e => e.date === ds).map(e => `${e.time} — ${e.nick}`).join('\n');
+
+$('schedCopy').onclick = () => {
+  const [from, to] = monthBounds(view.y, view.m);
+  const dates = [...new Set(schedule.filter(e => e.date >= from && e.date <= to).map(e => e.date))].sort();
+  copyText(`Расписание — ${MONTHS[view.m]} ${view.y}:\n\n` + dates.map(schedDayText).join('\n\n'));
+};
 
 // ---------- Создание расписания (админ) ----------
 const MONTH_KEYS = ['январ', 'феврал', 'март', 'апрел', 'ма', 'июн', 'июл', 'август', 'сентябр', 'октябр', 'ноябр', 'декабр'];
