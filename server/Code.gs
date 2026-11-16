@@ -13,6 +13,7 @@ const DJ_SHEET = 'Диджеи';
 const SLOTS_SHEET = 'Свободное время';
 const SCHEDULE_SHEET = 'Расписание';
 const WEEKENDS_SHEET = 'Выходные';
+const BLOCKED_SHEET = 'Закрытые дни';
 const MAX_AGE_SEC = 7 * 24 * 3600; // подпись Telegram действительна неделю
 const ALL_SLOTS = ['21:00–00:00', '00:00–03:00', '03:00–06:00',
   '20:00–22:00', '22:00–00:00', '00:00–02:00', '02:00–04:00', '04:00–06:00', '06:00–09:00'];
@@ -31,7 +32,10 @@ function doPost(e) {
     const req = JSON.parse(e.postData.contents);
     const user = verifyInitData(req.initData);
     res = user ? handle(req, user) : { ok: false, error: 'auth' };
-    if (res.ok) res.weekends = readWeekends(); // дни, которые админ сделал выходными, — всем
+    if (res.ok) { // дни, которые админ сделал выходными или закрыл для отметок, — всем
+      res.weekends = readWeekends();
+      res.blocked = readBlocked();
+    }
   } catch (err) {
     res = { ok: false, error: String(err && err.message || err) };
   }
@@ -58,6 +62,11 @@ function handle(req, user) {
   if (req.action === 'weekend') {
     if (!admin) return { ok: false, error: 'forbidden' };
     setWeekend(req.date, !!req.on);
+    return { ok: true, admin };
+  }
+  if (req.action === 'block') {
+    if (!admin) return { ok: false, error: 'forbidden' };
+    setBlocked(req.date, !!req.on);
     return { ok: true, admin };
   }
   return { ok: false, error: 'unknown action' };
@@ -148,15 +157,22 @@ function saveDj(user, nick, sets, busy) {
   try {
     const id = String(user.id);
     const clean = cleanSets(sets);
+    const dj = djSheet();
+    const ids = dj.getRange(1, 1, dj.getLastRow(), 1).getValues().map(r => String(r[0]));
+    const at = ids.indexOf(id);
+    // В закрытые админом дни диджей ничего не меняет: оставляем то, что было
+    const blocked = readBlocked();
+    if (blocked.length) {
+      let before = {};
+      try { const d = at > 0 ? JSON.parse(dj.getRange(at + 1, 6).getValue() || '{}') : {}; before = cleanSets(d.sets || (d.busy ? {} : d)); } catch (e) {}
+      blocked.forEach(ds => { if (before[ds]) clean[ds] = before[ds]; else delete clean[ds]; });
+    }
     const off = cleanBusy(busy, clean);
     const tgName = [user.first_name, user.last_name].filter(Boolean).join(' ');
     const name = String(nick || '').trim().slice(0, 40) || tgName || id;
     const row = [id, name, tgName, user.username ? '@' + user.username : '', new Date(), JSON.stringify({ sets: clean, busy: off })];
 
     // Лист «Диджеи»: одна строка на диджея
-    const dj = djSheet();
-    const ids = dj.getRange(1, 1, dj.getLastRow(), 1).getValues().map(r => String(r[0]));
-    const at = ids.indexOf(id);
     if (at > 0) dj.getRange(at + 1, 1, 1, row.length).setValues([row]);
     else dj.appendRow(row);
 
@@ -240,27 +256,33 @@ function readSchedule() {
     .map(r => ({ date: r[0], time: r[2], nick: r[3], id: r[4] }));
 }
 
-// ---------- Дополнительные выходные (праздники) ----------
-// В эти дни у всех диджеев слоты как в пятницу и субботу
+// ---------- Дни, отмеченные админом: выходные (праздники) и закрытые для отметок ----------
+// В дополнительные выходные у всех диджеев слоты как в пятницу и субботу,
+// в закрытые дни диджеи не могут менять своё свободное время
 const weekendsSheet = () => sheet(WEEKENDS_SHEET, ['Дата', 'День']);
+const blockedSheet = () => sheet(BLOCKED_SHEET, ['Дата', 'День']);
 
-function readWeekends() {
-  const sh = weekendsSheet();
+function readDates(sh) {
   if (sh.getLastRow() < 2) return [];
   return sh.getRange(2, 1, sh.getLastRow() - 1, 1).getDisplayValues()
     .map(r => r[0]).filter(ds => DATE_RE.test(ds));
 }
 
-function setWeekend(ds, on) {
+function setDate(sh, ds, on) {
   if (!DATE_RE.test(String(ds))) throw new Error('bad date');
   const lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
-    const dates = readWeekends().filter(d => d !== ds);
+    const dates = readDates(sh).filter(d => d !== ds);
     if (on) dates.push(ds);
     dates.sort();
-    writeRows(weekendsSheet(), dates.map(d => [d, weekdayOf(d)]), 2);
+    writeRows(sh, dates.map(d => [d, weekdayOf(d)]), 2);
   } finally {
     lock.releaseLock();
   }
 }
+
+const readWeekends = () => readDates(weekendsSheet());
+const setWeekend = (ds, on) => setDate(weekendsSheet(), ds, on);
+const readBlocked = () => readDates(blockedSheet());
+const setBlocked = (ds, on) => setDate(blockedSheet(), ds, on);
