@@ -12,6 +12,7 @@
 const DJ_SHEET = 'Диджеи';
 const SLOTS_SHEET = 'Свободное время';
 const SCHEDULE_SHEET = 'Расписание';
+const WEEKENDS_SHEET = 'Выходные';
 const MAX_AGE_SEC = 7 * 24 * 3600; // подпись Telegram действительна неделю
 const ALL_SLOTS = ['21:00–00:00', '00:00–03:00', '03:00–06:00',
   '20:00–22:00', '22:00–00:00', '00:00–02:00', '02:00–04:00', '04:00–06:00', '06:00–09:00'];
@@ -30,6 +31,7 @@ function doPost(e) {
     const req = JSON.parse(e.postData.contents);
     const user = verifyInitData(req.initData);
     res = user ? handle(req, user) : { ok: false, error: 'auth' };
+    if (res.ok) res.weekends = readWeekends(); // дни, которые админ сделал выходными, — всем
   } catch (err) {
     res = { ok: false, error: String(err && err.message || err) };
   }
@@ -52,6 +54,11 @@ function handle(req, user) {
     if (!admin) return { ok: false, error: 'forbidden' };
     publishSchedule(req.dates, req.entries);
     return { ok: true, admin, schedule: readSchedule() };
+  }
+  if (req.action === 'weekend') {
+    if (!admin) return { ok: false, error: 'forbidden' };
+    setWeekend(req.date, !!req.on);
+    return { ok: true, admin };
   }
   return { ok: false, error: 'unknown action' };
 }
@@ -231,4 +238,29 @@ function readSchedule() {
   return sh.getRange(2, 1, sh.getLastRow() - 1, 5).getDisplayValues()
     .filter(r => DATE_RE.test(r[0]) && r[2] && r[3])
     .map(r => ({ date: r[0], time: r[2], nick: r[3], id: r[4] }));
+}
+
+// ---------- Дополнительные выходные (праздники) ----------
+// В эти дни у всех диджеев слоты как в пятницу и субботу
+const weekendsSheet = () => sheet(WEEKENDS_SHEET, ['Дата', 'День']);
+
+function readWeekends() {
+  const sh = weekendsSheet();
+  if (sh.getLastRow() < 2) return [];
+  return sh.getRange(2, 1, sh.getLastRow() - 1, 1).getDisplayValues()
+    .map(r => r[0]).filter(ds => DATE_RE.test(ds));
+}
+
+function setWeekend(ds, on) {
+  if (!DATE_RE.test(String(ds))) throw new Error('bad date');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const dates = readWeekends().filter(d => d !== ds);
+    if (on) dates.push(ds);
+    dates.sort();
+    writeRows(weekendsSheet(), dates.map(d => [d, weekdayOf(d)]), 2);
+  } finally {
+    lock.releaseLock();
+  }
 }
