@@ -62,7 +62,10 @@ function handle(req, user) {
 }
 
 function handle2(req, user, admin) {
-  if (req.action === 'hello') return withNick({ ok: true, admin }, user);
+  if (req.action === 'hello') {
+    ensureDj(user, req.nick);
+    return withNick({ ok: true, admin }, user);
+  }
   if (req.action === 'save') {
     saveDj(user, req.nick, req.sets, req.busy, Number(req.nickAt) || 0);
     return withNick({ ok: true, admin }, user);
@@ -202,8 +205,6 @@ function saveDj(user, nick, sets, busy, nickAt) {
       blocked.forEach(ds => { if (before[ds]) clean[ds] = before[ds]; else delete clean[ds]; });
     }
     const off = cleanBusy(busy, clean);
-    // Новый диджей появляется в списке, только когда отметит время
-    if (at < 0 && !Object.keys(clean).length && !off.length) return;
     const tgName = [user.first_name, user.last_name].filter(Boolean).join(' ');
     // Ник, который админ поменял позже, чем диджей свой, не перезаписываем
     let name = String(nick || '').trim().slice(0, 40) || tgName || id;
@@ -252,6 +253,7 @@ function readDjs() {
       tgName: String(r[2]),
       username: String(r[3]),
       updated: r[4] instanceof Date ? r[4].getTime() : 0,
+      admin: isAdmin(r[0]),
       sets,
       busy,
     });
@@ -379,20 +381,36 @@ function renameDj(id, nick) {
   }
 }
 
-const removedSheet = () => sheet(REMOVED_SHEET, ['Telegram ID', 'Ник', 'Удалён', 'Доступ закрыт']);
+// Каждый, кто открыл календарь, есть в листе «Диджеи» — даже без отметок
+function ensureDj(user, nick) {
+  const id = String(user.id);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const dj = djSheet();
+    if (djRowIndex(dj, id) > 0) return;
+    const tgName = [user.first_name, user.last_name].filter(Boolean).join(' ');
+    const name = String(nick || '').trim().slice(0, 40) || tgName || id;
+    dj.appendRow([id, name, tgName, user.username ? '@' + user.username : '', new Date(), JSON.stringify({ sets: {}, busy: [], nickAt: 0 })]);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+const removedSheet = () => sheet(REMOVED_SHEET, ['Telegram ID', 'Ник', 'Удалён', 'Доступ закрыт', 'Имя в Telegram', 'Username']);
 
 function readRemoved() {
   const sh = removedSheet();
   if (sh.getLastRow() < 2) return [];
-  return sh.getRange(2, 1, sh.getLastRow() - 1, 4).getDisplayValues()
+  return sh.getRange(2, 1, sh.getLastRow() - 1, 6).getDisplayValues()
     .filter(r => r[0])
-    .map(r => ({ id: r[0], nick: r[1], stamp: r[2], blocked: r[3] === 'да' }));
+    .map(r => ({ id: r[0], nick: r[1], stamp: r[2], blocked: r[3] === 'да', tgName: r[4], username: r[5] }));
 }
 
 const findRemoved = id => readRemoved().find(r => r.id === String(id)) || null;
 
 function writeRemoved(list) {
-  writeRows(removedSheet(), list.map(r => [r.id, r.nick, r.stamp, r.blocked ? 'да' : '']), 4);
+  writeRows(removedSheet(), list.map(r => [r.id, r.nick, r.stamp, r.blocked ? 'да' : '', r.tgName || '', r.username || '']), 6);
 }
 
 // Удаляет диджея и его свободное время; опубликованное расписание не трогаем
@@ -403,27 +421,38 @@ function removeDj(id, block) {
   try {
     const dj = djSheet();
     const at = djRowIndex(dj, id);
-    let nick = id;
+    let nick = id, tgName = '', username = '';
     if (at > 0) {
-      nick = String(dj.getRange(at + 1, 2).getValue()) || id;
+      const row = dj.getRange(at + 1, 1, 1, 4).getValues()[0];
+      nick = String(row[1]) || id;
+      tgName = String(row[2]);
+      username = String(row[3]);
       dj.deleteRow(at + 1);
     }
     const sl = slotsSheet();
     if (sl.getLastRow() > 1) writeRows(sl, sl.getRange(2, 1, sl.getLastRow() - 1, 5).getDisplayValues().filter(r => r[0] && r[4] !== id), 5);
     const list = readRemoved().filter(r => r.id !== id);
-    list.push({ id, nick, stamp: String(Date.now()), blocked: block });
+    list.push({ id, nick, stamp: String(Date.now()), blocked: block, tgName, username });
     writeRemoved(list);
   } finally {
     lock.releaseLock();
   }
 }
 
-// Разблокированный диджей при следующем входе получит чистый календарь
+// Разблокированный диджей сразу возвращается в список без отметок,
+// а при следующем входе его старые отметки сотрутся и в календаре
 function unblockDj(id) {
+  id = String(id || '');
   const lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
-    writeRemoved(readRemoved().map(r => r.id === String(id) ? Object.assign(r, { blocked: false }) : r));
+    const list = readRemoved();
+    const r = list.find(x => x.id === id);
+    if (!r) return;
+    r.blocked = false;
+    writeRemoved(list);
+    const dj = djSheet();
+    if (djRowIndex(dj, id) < 1) dj.appendRow([id, r.nick || id, r.tgName || '', r.username || '', new Date(), JSON.stringify({ sets: {}, busy: [], nickAt: 0 })]);
   } finally {
     lock.releaseLock();
   }

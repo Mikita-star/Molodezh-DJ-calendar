@@ -863,7 +863,7 @@ async function serverPush() {
 async function serverHello() {
   if (!serverReady()) return;
   if (pushedAt() < (state.updatedAt || 0)) return serverPush();
-  try { setAdmin((await api('hello')).admin); } catch (e) {}
+  try { setAdmin((await api('hello', { nick: nick() })).admin); } catch (e) {}
 }
 
 // ---------- Админ-панель ----------
@@ -985,7 +985,7 @@ function renderMissing() {
       ${list.length ? list.map(dj => `
         <div class="manage-row"><div class="who"><b>${djLabel(dj)}</b><span>${esc(dj.username || '')}</span></div></div>`).join('')
         : `<div class="muted" style="margin-top:6px">${adminLoading ? '' : 'Все диджеи из списка отметили время 👍'}</div>`}
-      <div class="muted" style="font-size:12px;margin-top:8px">В списке — диджеи, которые хоть раз открывали календарь.</div>
+      <div class="muted" style="font-size:12px;margin-top:8px">В списке — все, кто открывал календарь через бота.</div>
     </div>`;
 }
 
@@ -999,7 +999,7 @@ function renderManage(djs) {
         <div class="manage-row">
           <div class="who"><b>${djLabel(dj)}</b><span>${esc(dj.username || dj.tgName || '')} · ID ${esc(dj.id)}</span></div>
           <button class="btn small" data-rename="${esc(dj.id)}">Ник</button>
-          <button class="btn small danger-line" data-remove="${esc(dj.id)}">Удалить</button>
+          ${dj.admin ? '<span class="muted" style="font-size:13px;width:72px;text-align:center">админ</span>' : `<button class="btn small danger-line" data-remove="${esc(dj.id)}">Удалить</button>`}
         </div>`).join('') || `<div class="muted" style="margin-top:6px">${adminLoading ? '' : 'Пока никого нет'}</div>`}
     </div>
     ${blockedList.length ? `
