@@ -981,12 +981,16 @@ function renderMissing() {
   const list = missingDjs();
   $('adminMissing').innerHTML = `
     <div class="card">
-      <b>Не отметили свободное время в ${MONTHS_PREP[view.m]}: ${list.length}</b>
+      <div class="row">
+        <b class="spacer">Не отметили свободное время в ${MONTHS_PREP[view.m]}: ${list.length}</b>
+        ${list.length ? '<button class="btn primary small" id="missingCopy">Скопировать</button>' : ''}
+      </div>
       ${list.length ? list.map(dj => `
         <div class="manage-row"><div class="who"><b>${djLabel(dj)}</b><span>${esc(dj.username || '')}</span></div></div>`).join('')
         : `<div class="muted" style="margin-top:6px">${adminLoading ? '' : 'Все диджеи из списка отметили время 👍'}</div>`}
       <div class="muted" style="font-size:12px;margin-top:8px">В списке — все, кто открывал календарь через бота.</div>
     </div>`;
+  if ($('missingCopy')) $('missingCopy').onclick = () => copyText(missingText());
 }
 
 // ---------- Управление диджеями: ник, удаление, блокировка ----------
@@ -1038,7 +1042,7 @@ function openRename(dj) {
     <h3>Ник диджея</h3>
     <div class="muted" style="font-size:13px">${esc(dj.tgName || '')} ${esc(dj.username || '')}</div>
     <label class="f">Новый ник — он поменяется и у самого диджея, и в расписании</label>
-    <input id="rnNick" maxlength="40" value="${esc(dj.nick)}">
+    <input type="text" id="rnNick" maxlength="40" value="${esc(dj.nick)}">
     <div class="actions">
       <button class="btn" id="rnCancel">Отмена</button>
       <button class="btn primary" id="rnSave">Сохранить</button>
@@ -1112,9 +1116,9 @@ function allText() {
   return `Свободные слоты — ${monthTitle()}:\n\n${blocks.join('\n\n')}`;
 }
 
-$('adminCopyAll').onclick = () => copyText(adminMode === 'missing'
-  ? `Не отметили свободное время — ${monthTitle()}:\n` + missingDjs().map(dj => `${djPlain(dj)}${dj.username ? ` (${dj.username})` : ''}`).join('\n')
-  : allText());
+const missingText = () => `Не отметили свободное время — ${monthTitle()}:\n` +
+  missingDjs().map(dj => `${djPlain(dj)}${dj.username ? ` (${dj.username})` : ''}`).join('\n');
+$('adminCopyAll').onclick = () => copyText(adminMode === 'missing' ? missingText() : allText());
 
 // Кнопка «Скопировать всё» подписана по текущему виду и выключена, когда копировать нечего
 function renderCopyAll() {
