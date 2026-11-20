@@ -210,6 +210,19 @@
   .seg { display: flex; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
   .seg button { flex: 1; border: 0; background: none; padding: 8px 4px; border-radius: 8px; color: var(--muted); }
   .seg button.on { background: var(--accent); color: var(--on-accent); }
+  #adminMode button { font-size: 12.5px; padding: 8px 2px; line-height: 1.15; }
+  .locked-screen { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: none; align-items: center; justify-content: center;
+    padding: 24px; text-align: center; }
+  .locked-screen.open { display: flex; }
+  .locked-screen h3 { margin: 12px 0 8px; font-size: 22px; }
+  .manage-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .manage-row:first-of-type { border-top: 0; }
+  .manage-row .who { flex: 1; min-width: 0; }
+  .manage-row .who b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .manage-row .who span { font-size: 12px; color: var(--muted); }
+  .btn.danger-line { border-color: var(--danger); color: var(--danger); }
+  .check-line { display: flex; gap: 10px; align-items: flex-start; margin: 14px 0 4px; font-size: 15px; }
+  .check-line input { width: 20px; height: 20px; margin: 0; accent-color: var(--danger); flex: none; }
   .actions { display: flex; gap: 8px; margin-top: 16px; }
   .actions .btn { flex: 1; padding: 12px; }
 
@@ -261,6 +274,8 @@
       <div class="seg spacer" id="adminMode">
         <button data-v="dates">По датам</button>
         <button data-v="djs">По диджеям</button>
+        <button data-v="missing">Не отметили</button>
+        <button data-v="manage">Управление</button>
       </div>
       <button class="icon-btn" id="adminRefresh" aria-label="Обновить">↻</button>
     </div>
@@ -274,6 +289,8 @@
       <div class="grid swipe" id="adminCalendar"></div>
     </div>
     <div class="swipe" id="adminDjs"></div>
+    <div class="swipe" id="adminMissing"></div>
+    <div id="adminManage"></div>
     <div class="status" id="adminStatus"></div>
   </section>
 
@@ -318,6 +335,13 @@
 </div>
 
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
+<div class="locked-screen" id="lockedScreen">
+  <div class="inner">
+    <div style="font-size:48px">🔒</div>
+    <h3>Доступ закрыт</h3>
+    <div class="muted">Администратор закрыл тебе доступ к календарю. Если это ошибка — напиши администратору.</div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -724,7 +748,10 @@ let serverState = ''; // '', 'sending', 'ok', 'error'
 async function api(action, payload = {}) {
   const res = await fetch(SERVER_URL, { method: 'POST', body: JSON.stringify({ action, initData: tg.initData, ...payload }) });
   const data = await res.json();
+  setLocked(data.error === 'blocked');
   if (!data.ok) throw new Error(data.error || 'server');
+  if (data.wipe) wipeAfterRemoval(String(data.wipe));
+  if (data.nick && (data.nickAt || 0) > (state.settings.nickAt || 0)) adoptNick(data.nick, data.nickAt);
   if (Array.isArray(data.weekends)) setExtraWeekends(data.weekends);
   if (Array.isArray(data.blocked)) setBlockedDays(data.blocked);
   return data;
@@ -735,6 +762,43 @@ function setExtraWeekends(list) {
   if (next.join() === [...extraWeekends].sort().join()) return;
   extraWeekends = new Set(next);
   try { localStorage.setItem(WEEKENDS_KEY, JSON.stringify(next)); } catch (e) {}
+  renderAll();
+}
+
+// ---------- Если админ удалил или заблокировал диджея ----------
+const LOCKED_KEY = `mdjcal.locked.tg${TG_USER}`;
+const WIPED_KEY = `mdjcal.wiped.tg${TG_USER}`;
+
+function setLocked(on) {
+  try { on ? localStorage.setItem(LOCKED_KEY, '1') : localStorage.removeItem(LOCKED_KEY); } catch (e) {}
+  $('lockedScreen').classList.toggle('open', on);
+}
+
+// Админ удалил диджея: стираем его отметки здесь и в облаке Telegram, затем подтверждаем серверу
+let wiping = false;
+async function wipeAfterRemoval(stamp) {
+  if (wiping) return;
+  wiping = true;
+  try {
+    if (localStorage.getItem(WIPED_KEY) !== stamp) {
+      state.sets = {};
+      state.busy = {};
+      save();
+      try { localStorage.setItem(WIPED_KEY, stamp); } catch (e) {}
+      renderAll();
+    }
+    await api('save', { nick: nick(), sets: {}, nickAt: state.settings.nickAt || 0, wipeAck: stamp });
+    try { localStorage.setItem(PUSHED_KEY, String(state.updatedAt || 0)); } catch (e) {}
+  } catch (e) {}
+  wiping = false;
+}
+
+// Ник, который поменял админ, становится ником диджея
+function adoptNick(newNick, at) {
+  state.settings.nick = newNick;
+  state.settings.nickAt = at;
+  storeLocal();
+  cloudPushSoon();
   renderAll();
 }
 
@@ -785,7 +849,7 @@ async function serverPush() {
   renderServerStatus();
   try {
     // Админу уходит только свободное время; занятые дни остаются в личном календаре
-    const res = await api('save', { nick: nick(), sets: state.sets });
+    const res = await api('save', { nick: nick(), sets: state.sets, nickAt: state.settings.nickAt || 0 });
     try { localStorage.setItem(PUSHED_KEY, String(stamp)); } catch (e) {}
     serverState = 'ok';
     setAdmin(res.admin);
@@ -808,6 +872,7 @@ let isAdminUser = (() => { try { return localStorage.getItem(ADMIN_KEY) === '1';
 let adminOpen = false;
 let adminMode = 'dates';
 let adminData = null; // список диджеев с сервера
+let adminRemoved = []; // удалённые и заблокированные диджеи
 let adminLoading = false;
 
 function setAdmin(v) {
@@ -851,7 +916,9 @@ async function loadAdmin() {
   adminLoading = true;
   renderAdmin();
   try {
-    adminData = (await api('admin')).djs;
+    const res = await api('admin');
+    adminData = res.djs;
+    adminRemoved = res.removed || [];
   } catch (e) {
     toast(e.message === 'forbidden' ? 'Нет доступа администратора' : 'Не удалось загрузить данные', true);
     if (e.message === 'forbidden') setAdmin(false);
@@ -874,6 +941,9 @@ function renderAdmin() {
   $('adminMode').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === adminMode));
   $('adminDates').style.display = adminMode === 'dates' ? '' : 'none';
   $('adminDjs').style.display = adminMode === 'djs' ? '' : 'none';
+  $('adminMissing').style.display = adminMode === 'missing' ? '' : 'none';
+  $('adminManage').style.display = adminMode === 'manage' ? '' : 'none';
+  $('adminCopyAll').style.display = adminMode === 'manage' ? 'none' : '';
   const djs = adminData || [];
   $('adminStatus').textContent = adminLoading ? 'Загружаю…' : adminData ? `Диджеев в списке: ${djs.length}` : '';
   renderCopyAll();
@@ -885,6 +955,8 @@ function renderAdmin() {
     }, openAdminDay);
     return;
   }
+  if (adminMode === 'missing') return renderMissing(djs);
+  if (adminMode === 'manage') return renderManage(djs);
   $('adminDjs').innerHTML = djs.length ? djs.map(dj => {
     const days = monthDays(dj.sets);
     return `
@@ -900,6 +972,113 @@ function renderAdmin() {
   }).join('') : `<div class="empty">${adminLoading ? '' : 'Пока никто не отметил свободное время'}</div>`;
   $('adminDjs').querySelectorAll('[data-copy-dj]').forEach(b =>
     b.onclick = () => copyText(djText(djs.find(dj => dj.id === b.dataset.copyDj))));
+}
+
+// ---------- Кто ещё не отметил время в месяце ----------
+const missingDjs = () => (adminData || []).filter(dj => !monthDays(dj.sets).length);
+
+function renderMissing() {
+  const list = missingDjs();
+  $('adminMissing').innerHTML = `
+    <div class="card">
+      <b>Не отметили свободное время в ${MONTHS_PREP[view.m]}: ${list.length}</b>
+      ${list.length ? list.map(dj => `
+        <div class="manage-row"><div class="who"><b>${djLabel(dj)}</b><span>${esc(dj.username || '')}</span></div></div>`).join('')
+        : `<div class="muted" style="margin-top:6px">${adminLoading ? '' : 'Все диджеи из списка отметили время 👍'}</div>`}
+      <div class="muted" style="font-size:12px;margin-top:8px">В списке — диджеи, которые хоть раз открывали календарь.</div>
+    </div>`;
+}
+
+// ---------- Управление диджеями: ник, удаление, блокировка ----------
+function renderManage(djs) {
+  const blockedList = adminRemoved.filter(r => r.blocked);
+  $('adminManage').innerHTML = `
+    <div class="card">
+      <b>Диджеи: ${djs.length}</b>
+      ${djs.map(dj => `
+        <div class="manage-row">
+          <div class="who"><b>${djLabel(dj)}</b><span>${esc(dj.username || dj.tgName || '')} · ID ${esc(dj.id)}</span></div>
+          <button class="btn small" data-rename="${esc(dj.id)}">Ник</button>
+          <button class="btn small danger-line" data-remove="${esc(dj.id)}">Удалить</button>
+        </div>`).join('') || `<div class="muted" style="margin-top:6px">${adminLoading ? '' : 'Пока никого нет'}</div>`}
+    </div>
+    ${blockedList.length ? `
+    <div class="card">
+      <b>Доступ закрыт: ${blockedList.length}</b>
+      ${blockedList.map(r => `
+        <div class="manage-row">
+          <div class="who"><b>${esc(r.nick || r.id)}</b><span>ID ${esc(r.id)}</span></div>
+          <button class="btn small" data-unblock="${esc(r.id)}">Разблокировать</button>
+        </div>`).join('')}
+    </div>` : ''}`;
+  $('adminManage').querySelectorAll('[data-rename]').forEach(b => b.onclick = () => openRename(djs.find(dj => dj.id === b.dataset.rename)));
+  $('adminManage').querySelectorAll('[data-remove]').forEach(b => b.onclick = () => openRemove(djs.find(dj => dj.id === b.dataset.remove)));
+  $('adminManage').querySelectorAll('[data-unblock]').forEach(b => b.onclick = () => openUnblock(adminRemoved.find(r => r.id === b.dataset.unblock)));
+}
+
+// Запрос админа, после которого сервер присылает свежий список диджеев
+async function manageCall(btn, action, payload, okText) {
+  btn.disabled = true;
+  try {
+    const res = await api(action, payload);
+    adminData = res.djs;
+    adminRemoved = res.removed || [];
+    closeModal();
+    toast(okText);
+    renderAdmin();
+  } catch (e) {
+    btn.disabled = false;
+    const msg = { 'unknown action': 'Обнови скрипт таблицы (новый Code.gs)', admin: 'Администратора удалить нельзя — сначала убери его из ADMIN_IDS', 'not found': 'Диджей не найден — обнови список' }[e.message];
+    toast(msg || 'Не удалось сохранить', true);
+  }
+}
+
+function openRename(dj) {
+  openModal(`
+    <h3>Ник диджея</h3>
+    <div class="muted" style="font-size:13px">${esc(dj.tgName || '')} ${esc(dj.username || '')}</div>
+    <label class="f">Новый ник — он поменяется и у самого диджея, и в расписании</label>
+    <input id="rnNick" maxlength="40" value="${esc(dj.nick)}">
+    <div class="actions">
+      <button class="btn" id="rnCancel">Отмена</button>
+      <button class="btn primary" id="rnSave">Сохранить</button>
+    </div>`);
+  $('rnCancel').onclick = closeModal;
+  $('rnSave').onclick = () => {
+    const v = $('rnNick').value.trim();
+    if (!v) { toast('Впиши ник', true); return; }
+    if (v === dj.nick) { closeModal(); return; }
+    manageCall($('rnSave'), 'rename', { id: dj.id, nick: v }, `Ник изменён: ${v}`);
+  };
+}
+
+function openRemove(dj) {
+  openModal(`
+    <h3>Удалить ${djLabel(dj)}?</h3>
+    <div class="muted" style="font-size:14px;line-height:1.45">Диджей пропадёт из списка, его свободное время удалится из таблицы и из его календаря. Опубликованное расписание не изменится.</div>
+    <label class="check-line"><input type="checkbox" id="rmBlock"><span><b>Закрыть доступ к календарю</b><br><span class="muted" style="font-size:13px">Без галочки диджей сможет зайти снова — с чистым календарём</span></span></label>
+    <div class="actions">
+      <button class="btn" id="rmCancel">Отмена</button>
+      <button class="btn danger-fill" id="rmOk">Удалить</button>
+    </div>`);
+  $('rmCancel').onclick = closeModal;
+  $('rmBlock').onchange = () => { $('rmOk').textContent = $('rmBlock').checked ? 'Удалить и закрыть доступ' : 'Удалить'; };
+  $('rmOk').onclick = () => {
+    const block = $('rmBlock').checked;
+    manageCall($('rmOk'), 'remove', { id: dj.id, block }, block ? `${djPlain(dj)} удалён, доступ закрыт` : `${djPlain(dj)} удалён`);
+  };
+}
+
+function openUnblock(r) {
+  openModal(`
+    <h3>Разблокировать ${esc(r.nick || r.id)}?</h3>
+    <div class="muted" style="font-size:14px;line-height:1.45">Диджей снова сможет открыть календарь — с чистыми отметками.</div>
+    <div class="actions">
+      <button class="btn" id="ubCancel">Отмена</button>
+      <button class="btn primary" id="ubOk">Разблокировать</button>
+    </div>`);
+  $('ubCancel').onclick = closeModal;
+  $('ubOk').onclick = () => manageCall($('ubOk'), 'unblock', { id: r.id }, 'Доступ открыт');
 }
 
 // ---------- Копирование для админа ----------
@@ -933,13 +1112,15 @@ function allText() {
   return `Свободные слоты — ${monthTitle()}:\n\n${blocks.join('\n\n')}`;
 }
 
-$('adminCopyAll').onclick = () => copyText(allText());
+$('adminCopyAll').onclick = () => copyText(adminMode === 'missing'
+  ? `Не отметили свободное время — ${monthTitle()}:\n` + missingDjs().map(dj => `${djPlain(dj)}${dj.username ? ` (${dj.username})` : ''}`).join('\n')
+  : allText());
 
 // Кнопка «Скопировать всё» подписана по текущему виду и выключена, когда копировать нечего
 function renderCopyAll() {
   const any = (adminData || []).some(dj => monthDays(dj.sets).length);
-  $('adminCopyAll').textContent = adminMode === 'djs' ? 'Скопировать всё — по диджеям' : 'Скопировать всё — по датам';
-  $('adminCopyAll').disabled = !any;
+  $('adminCopyAll').textContent = adminMode === 'djs' ? 'Скопировать всё — по диджеям' : adminMode === 'missing' ? 'Скопировать список' : 'Скопировать всё — по датам';
+  $('adminCopyAll').disabled = adminMode === 'missing' ? !missingDjs().length : !any;
 }
 
 function openAdminDay(ds) {
@@ -995,7 +1176,7 @@ function move(dir) {
   if (view.m < 0) { view.m = 11; view.y--; }
   if (view.m > 11) { view.m = 0; view.y++; }
   renderAll();
-  (adminOpen ? [$('adminCalendar'), $('adminDjs')] : tab === 'sched' ? [$('schedList')] : [$('calendar'), $('setsList')]).forEach(el => slide(el, dir));
+  (adminOpen ? [$('adminCalendar'), $('adminDjs'), $('adminMissing')] : tab === 'sched' ? [$('schedList')] : [$('calendar'), $('setsList')]).forEach(el => slide(el, dir));
 }
 
 // Свайп влево — следующий месяц, вправо — предыдущий; на Mac — жест двумя пальцами по трекпаду
@@ -1062,7 +1243,9 @@ $('openSettings').onclick = () => {
   $('stCancel').onclick = closeModal;
   $('stSave').onclick = () => {
     state.settings.theme = theme;
-    state.settings.nick = $('stNick').value.trim();
+    const newNick = $('stNick').value.trim();
+    if (newNick !== (state.settings.nick || '')) state.settings.nickAt = Date.now(); // свой ник важнее старого ника от админа
+    state.settings.nick = newNick;
     save();
     closeModal();
     toast('Настройки сохранены');
@@ -1532,6 +1715,7 @@ async function cloudPull() {
 
 applyTheme();
 setAdmin(isAdminUser);
+try { if (localStorage.getItem(LOCKED_KEY) === '1') setLocked(true); } catch (e) {}
 renderAll();
 
 if (tg) {

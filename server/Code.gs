@@ -14,6 +14,7 @@ const SLOTS_SHEET = 'Свободное время';
 const SCHEDULE_SHEET = 'Расписание';
 const WEEKENDS_SHEET = 'Выходные';
 const BLOCKED_SHEET = 'Закрытые дни';
+const REMOVED_SHEET = 'Удалённые';
 const MAX_AGE_SEC = 7 * 24 * 3600; // подпись Telegram действительна неделю
 const ALL_SLOTS = ['21:00–00:00', '00:00–03:00', '03:00–06:00',
   '20:00–22:00', '22:00–00:00', '00:00–02:00', '02:00–04:00', '04:00–06:00', '06:00–09:00'];
@@ -44,14 +45,47 @@ function doPost(e) {
 
 function handle(req, user) {
   const admin = isAdmin(user.id);
-  if (req.action === 'hello') return { ok: true, admin };
+  const id = String(user.id);
+  // Удалённый админом диджей: заблокированному — отказ во всём,
+  // остальным — команда стереть старые отметки (wipe), пока приложение не подтвердит
+  const gone = admin ? null : findRemoved(id);
+  if (gone && gone.blocked) return { ok: false, error: 'blocked' };
+  if (gone && req.action === 'save' && String(req.wipeAck) === gone.stamp) {
+    unremove(id);
+  } else if (gone) {
+    if (req.action === 'save') return { ok: true, admin, wipe: gone.stamp };
+    const res = handle2(req, user, admin);
+    if (res.ok) res.wipe = gone.stamp;
+    return res;
+  }
+  return handle2(req, user, admin);
+}
+
+function handle2(req, user, admin) {
+  if (req.action === 'hello') return withNick({ ok: true, admin }, user);
   if (req.action === 'save') {
-    saveDj(user, req.nick, req.sets, req.busy);
-    return { ok: true, admin };
+    saveDj(user, req.nick, req.sets, req.busy, Number(req.nickAt) || 0);
+    return withNick({ ok: true, admin }, user);
   }
   if (req.action === 'admin') {
     if (!admin) return { ok: false, error: 'forbidden' };
-    return { ok: true, admin, djs: readDjs() };
+    return { ok: true, admin, djs: readDjs(), removed: readRemoved() };
+  }
+  if (req.action === 'rename') {
+    if (!admin) return { ok: false, error: 'forbidden' };
+    renameDj(req.id, req.nick);
+    return { ok: true, admin, djs: readDjs(), removed: readRemoved() };
+  }
+  if (req.action === 'remove') {
+    if (!admin) return { ok: false, error: 'forbidden' };
+    if (isAdmin(req.id)) return { ok: false, error: 'admin' };
+    removeDj(req.id, !!req.block);
+    return { ok: true, admin, djs: readDjs(), removed: readRemoved() };
+  }
+  if (req.action === 'unblock') {
+    if (!admin) return { ok: false, error: 'forbidden' };
+    unblockDj(req.id);
+    return { ok: true, admin, djs: readDjs(), removed: readRemoved() };
   }
   if (req.action === 'schedule') return { ok: true, admin, schedule: readSchedule() };
   if (req.action === 'publish') {
@@ -151,7 +185,7 @@ function cleanBusy(busy, sets) {
     .filter((ds, i, all) => DATE_RE.test(ds) && !sets[ds] && all.indexOf(ds) === i).sort();
 }
 
-function saveDj(user, nick, sets, busy) {
+function saveDj(user, nick, sets, busy, nickAt) {
   const lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
@@ -168,9 +202,19 @@ function saveDj(user, nick, sets, busy) {
       blocked.forEach(ds => { if (before[ds]) clean[ds] = before[ds]; else delete clean[ds]; });
     }
     const off = cleanBusy(busy, clean);
+    // Новый диджей появляется в списке, только когда отметит время
+    if (at < 0 && !Object.keys(clean).length && !off.length) return;
     const tgName = [user.first_name, user.last_name].filter(Boolean).join(' ');
-    const name = String(nick || '').trim().slice(0, 40) || tgName || id;
-    const row = [id, name, tgName, user.username ? '@' + user.username : '', new Date(), JSON.stringify({ sets: clean, busy: off })];
+    // Ник, который админ поменял позже, чем диджей свой, не перезаписываем
+    let name = String(nick || '').trim().slice(0, 40) || tgName || id;
+    let savedNickAt = 0;
+    if (at > 0) {
+      const prev = dj.getRange(at + 1, 1, 1, 6).getValues()[0];
+      try { savedNickAt = Number(JSON.parse(prev[5] || '{}').nickAt) || 0; } catch (e) {}
+      if (savedNickAt && nickAt < savedNickAt) name = String(prev[1]);
+      else savedNickAt = Math.max(savedNickAt, nickAt);
+    }
+    const row = [id, name, tgName, user.username ? '@' + user.username : '', new Date(), JSON.stringify({ sets: clean, busy: off, nickAt: savedNickAt })];
 
     // Лист «Диджеи»: одна строка на диджея
     if (at > 0) dj.getRange(at + 1, 1, 1, row.length).setValues([row]);
@@ -286,3 +330,112 @@ const readWeekends = () => readDates(weekendsSheet());
 const setWeekend = (ds, on) => setDate(weekendsSheet(), ds, on);
 const readBlocked = () => readDates(blockedSheet());
 const setBlocked = (ds, on) => setDate(blockedSheet(), ds, on);
+
+// ---------- Управление диджеями (только админ) ----------
+// Текущий ник диджея и когда его менял админ — приложение диджея подхватывает его
+function withNick(res, user) {
+  const dj = djSheet();
+  if (dj.getLastRow() < 2) return res;
+  const row = dj.getRange(2, 1, dj.getLastRow() - 1, 6).getValues().find(r => String(r[0]) === String(user.id));
+  if (!row) return res;
+  let nickAt = 0;
+  try { nickAt = Number(JSON.parse(row[5] || '{}').nickAt) || 0; } catch (e) {}
+  res.nick = String(row[1]);
+  res.nickAt = nickAt;
+  return res;
+}
+
+function djRowIndex(dj, id) {
+  if (dj.getLastRow() < 2) return -1;
+  const ids = dj.getRange(1, 1, dj.getLastRow(), 1).getValues().map(r => String(r[0]));
+  return ids.indexOf(String(id));
+}
+
+// Новый ник — в листе «Диджеи», в «Свободном времени» и в опубликованном расписании
+function renameDj(id, nick) {
+  id = String(id || '');
+  nick = String(nick || '').trim().slice(0, 40);
+  if (!nick) throw new Error('empty nick');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const dj = djSheet();
+    const at = djRowIndex(dj, id);
+    if (at < 1) throw new Error('not found');
+    let data = {};
+    try { data = JSON.parse(dj.getRange(at + 1, 6).getValue() || '{}'); } catch (e) {}
+    data.nickAt = Date.now();
+    dj.getRange(at + 1, 2).setValue(nick);
+    dj.getRange(at + 1, 6).setValue(JSON.stringify(data));
+    [[slotsSheet(), 5, 4], [scheduleSheet(), 5, 4]].forEach(([sh, width, nickCol]) => {
+      if (sh.getLastRow() < 2) return;
+      const rows = sh.getRange(2, 1, sh.getLastRow() - 1, width).getDisplayValues();
+      let changed = false;
+      rows.forEach(r => { if (r[width - 1] === id && r[nickCol - 1] !== nick) { r[nickCol - 1] = nick; changed = true; } });
+      if (changed) writeRows(sh, rows, width);
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+const removedSheet = () => sheet(REMOVED_SHEET, ['Telegram ID', 'Ник', 'Удалён', 'Доступ закрыт']);
+
+function readRemoved() {
+  const sh = removedSheet();
+  if (sh.getLastRow() < 2) return [];
+  return sh.getRange(2, 1, sh.getLastRow() - 1, 4).getDisplayValues()
+    .filter(r => r[0])
+    .map(r => ({ id: r[0], nick: r[1], stamp: r[2], blocked: r[3] === 'да' }));
+}
+
+const findRemoved = id => readRemoved().find(r => r.id === String(id)) || null;
+
+function writeRemoved(list) {
+  writeRows(removedSheet(), list.map(r => [r.id, r.nick, r.stamp, r.blocked ? 'да' : '']), 4);
+}
+
+// Удаляет диджея и его свободное время; опубликованное расписание не трогаем
+function removeDj(id, block) {
+  id = String(id || '');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const dj = djSheet();
+    const at = djRowIndex(dj, id);
+    let nick = id;
+    if (at > 0) {
+      nick = String(dj.getRange(at + 1, 2).getValue()) || id;
+      dj.deleteRow(at + 1);
+    }
+    const sl = slotsSheet();
+    if (sl.getLastRow() > 1) writeRows(sl, sl.getRange(2, 1, sl.getLastRow() - 1, 5).getDisplayValues().filter(r => r[0] && r[4] !== id), 5);
+    const list = readRemoved().filter(r => r.id !== id);
+    list.push({ id, nick, stamp: String(Date.now()), blocked: block });
+    writeRemoved(list);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Разблокированный диджей при следующем входе получит чистый календарь
+function unblockDj(id) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    writeRemoved(readRemoved().map(r => r.id === String(id) ? Object.assign(r, { blocked: false }) : r));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Приложение диджея стёрло старые отметки — дальше он обычный диджей
+function unremove(id) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    writeRemoved(readRemoved().filter(r => r.id !== String(id)));
+  } finally {
+    lock.releaseLock();
+  }
+}
