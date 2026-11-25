@@ -15,6 +15,9 @@ const SCHEDULE_SHEET = 'Расписание';
 const WEEKENDS_SHEET = 'Выходные';
 const BLOCKED_SHEET = 'Закрытые дни';
 const REMOVED_SHEET = 'Удалённые';
+const DAY_SLOTS_SHEET = 'Слоты дней';
+const CLEARS_SHEET = 'Очищенные дни';
+const SLOT_RE = /^\d{2}:\d{2}–\d{2}:\d{2}$/;
 const MAX_AGE_SEC = 7 * 24 * 3600; // подпись Telegram действительна неделю
 const ALL_SLOTS = ['21:00–00:00', '00:00–03:00', '03:00–06:00',
   '20:00–22:00', '22:00–00:00', '00:00–02:00', '02:00–04:00', '04:00–06:00', '06:00–09:00'];
@@ -36,6 +39,8 @@ function doPost(e) {
     if (res.ok) { // дни, которые админ сделал выходными или закрыл для отметок, — всем
       res.weekends = readWeekends();
       res.blocked = readBlocked();
+      res.daySlots = readDaySlots();
+      res.clears = readClears();
     }
   } catch (err) {
     res = { ok: false, error: String(err && err.message || err) };
@@ -67,7 +72,7 @@ function handle2(req, user, admin) {
     return withNick({ ok: true, admin }, user);
   }
   if (req.action === 'save') {
-    saveDj(user, req.nick, req.sets, req.busy, Number(req.nickAt) || 0);
+    saveDj(user, req.nick, req.sets, req.busy, Number(req.nickAt) || 0, req.clears);
     return withNick({ ok: true, admin }, user);
   }
   if (req.action === 'admin') {
@@ -83,6 +88,16 @@ function handle2(req, user, admin) {
     if (!admin) return { ok: false, error: 'forbidden' };
     if (isAdmin(req.id)) return { ok: false, error: 'admin' };
     removeDj(req.id, !!req.block);
+    return { ok: true, admin, djs: readDjs(), removed: readRemoved() };
+  }
+  if (req.action === 'dayslots') {
+    if (!admin) return { ok: false, error: 'forbidden' };
+    setDaySlots(req.date, req.slots);
+    return { ok: true, admin, djs: readDjs(), removed: readRemoved() };
+  }
+  if (req.action === 'clearday') {
+    if (!admin) return { ok: false, error: 'forbidden' };
+    clearDay(req.date);
     return { ok: true, admin, djs: readDjs(), removed: readRemoved() };
   }
   if (req.action === 'unblock') {
@@ -176,7 +191,8 @@ function cleanSets(sets) {
   const res = {};
   Object.keys(sets || {}).slice(0, 1000).forEach(ds => {
     if (!DATE_RE.test(ds) || !Array.isArray(sets[ds])) return;
-    const slots = sets[ds].filter(s => ALL_SLOTS.indexOf(s) >= 0);
+    const own = readDaySlots()[ds] || [];
+    const slots = sets[ds].filter(s => ALL_SLOTS.indexOf(s) >= 0 || own.indexOf(s) >= 0);
     if (slots.length) res[ds] = slots;
   });
   return res;
@@ -188,7 +204,7 @@ function cleanBusy(busy, sets) {
     .filter((ds, i, all) => DATE_RE.test(ds) && !sets[ds] && all.indexOf(ds) === i).sort();
 }
 
-function saveDj(user, nick, sets, busy, nickAt) {
+function saveDj(user, nick, sets, busy, nickAt, clearsAck) {
   const lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
@@ -197,8 +213,11 @@ function saveDj(user, nick, sets, busy, nickAt) {
     const dj = djSheet();
     const ids = dj.getRange(1, 1, dj.getLastRow(), 1).getValues().map(r => String(r[0]));
     const at = ids.indexOf(id);
-    // В закрытые админом дни диджей ничего не меняет: оставляем то, что было
-    const blocked = readBlocked();
+    // В закрытые админом дни диджей ничего не меняет: оставляем то, что было.
+    // То же для очищенных дней, пока приложение диджея не узнало об очистке
+    const clears = readClears();
+    const ack = clearsAck && typeof clearsAck === 'object' ? clearsAck : {};
+    const blocked = readBlocked().concat(Object.keys(clears).filter(ds => (Number(ack[ds]) || 0) < clears[ds]));
     if (blocked.length) {
       let before = {};
       try { const d = at > 0 ? JSON.parse(dj.getRange(at + 1, 6).getValue() || '{}') : {}; before = cleanSets(d.sets || (d.busy ? {} : d)); } catch (e) {}
@@ -227,7 +246,7 @@ function saveDj(user, nick, sets, busy, nickAt) {
     const rows = old.filter(r => r[4] !== id);
     Object.keys(clean).forEach(ds => clean[ds].forEach(slot => rows.push([ds, weekdayOf(ds), slot, name, id])));
     off.forEach(ds => rows.push([ds, weekdayOf(ds), BUSY_LABEL, name, id]));
-    rows.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : ALL_SLOTS.indexOf(a[2]) - ALL_SLOTS.indexOf(b[2]));
+    rows.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : timeKey(a[2]) - timeKey(b[2]));
     writeRows(sl, rows, 5);
   } finally {
     lock.releaseLock();
@@ -464,6 +483,78 @@ function unremove(id) {
   lock.waitLock(15000);
   try {
     writeRemoved(readRemoved().filter(r => r.id !== String(id)));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ---------- Свои слоты дня и очистка дня (только админ) ----------
+// Лист «Слоты дней»: дата и её слоты через запятую — вместо стандартных будних или выходных
+const daySlotsSheet = () => sheet(DAY_SLOTS_SHEET, ['Дата', 'День', 'Слоты']);
+let daySlotsCache = null;
+
+function readDaySlots() {
+  if (daySlotsCache) return daySlotsCache;
+  const sh = daySlotsSheet(), res = {};
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, 3).getDisplayValues().forEach(r => {
+    const slots = String(r[2]).split(',').map(x => x.trim()).filter(x => SLOT_RE.test(x));
+    if (DATE_RE.test(r[0]) && slots.length) res[r[0]] = slots;
+  });
+  return daySlotsCache = res;
+}
+
+// slots — массив «ЧЧ:ММ–ЧЧ:ММ»; пустой или null — вернуть стандартные слоты
+function setDaySlots(ds, slots) {
+  if (!DATE_RE.test(String(ds))) throw new Error('bad date');
+  const list = (Array.isArray(slots) ? slots : []).map(x => String(x).trim()).filter(x => SLOT_RE.test(x))
+    .filter((x, i, all) => all.indexOf(x) === i).slice(0, 24).sort((a, b) => timeKey(a) - timeKey(b));
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const map = Object.assign({}, readDaySlots());
+    if (list.length) map[ds] = list; else delete map[ds];
+    writeRows(daySlotsSheet(), Object.keys(map).sort().map(d => [d, weekdayOf(d), map[d].join(', ')]), 3);
+    daySlotsCache = null;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Лист «Очищенные дни»: когда админ стёр отметки всех диджеев на дату
+const clearsSheet = () => sheet(CLEARS_SHEET, ['Дата', 'День', 'Очищено']);
+
+function readClears() {
+  const sh = clearsSheet(), res = {};
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, 3).getDisplayValues().forEach(r => {
+    if (DATE_RE.test(r[0]) && Number(r[2])) res[r[0]] = Number(r[2]);
+  });
+  return res;
+}
+
+// Стирает свободное время всех диджеев на дату — в таблице сразу, у диджеев при следующем открытии
+function clearDay(ds) {
+  if (!DATE_RE.test(String(ds))) throw new Error('bad date');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const dj = djSheet();
+    if (dj.getLastRow() > 1) {
+      const range = dj.getRange(2, 6, dj.getLastRow() - 1, 1);
+      const vals = range.getValues().map(r => {
+        try {
+          const d = JSON.parse(r[0] || '{}');
+          if (d.sets && d.sets[ds]) { delete d.sets[ds]; return [JSON.stringify(d)]; }
+        } catch (e) {}
+        return [r[0]];
+      });
+      range.setValues(vals);
+    }
+    const sl = slotsSheet();
+    if (sl.getLastRow() > 1) writeRows(sl, sl.getRange(2, 1, sl.getLastRow() - 1, 5).getDisplayValues()
+      .filter(r => r[0] && !(r[0] === ds && r[2] !== BUSY_LABEL)), 5);
+    const map = readClears();
+    map[ds] = Date.now();
+    writeRows(clearsSheet(), Object.keys(map).sort().map(d => [d, weekdayOf(d), String(map[d])]), 3);
   } finally {
     lock.releaseLock();
   }

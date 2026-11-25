@@ -415,10 +415,15 @@ const WEEKENDS_KEY = 'mdjcal.extraWeekends';
 let extraWeekends = (() => { try { return new Set(JSON.parse(localStorage.getItem(WEEKENDS_KEY)) || []); } catch (e) { return new Set(); } })();
 const isNaturalWeekend = s => { const w = weekday(s); return w === 5 || w === 6; };
 const isWeekend = s => isNaturalWeekend(s) || extraWeekends.has(s);
+// Свои слоты дня, которые задал админ, и дни, где админ стёр отметки всех диджеев
+const DAYSLOTS_KEY = 'mdjcal.daySlots';
+let daySlots = (() => { try { return JSON.parse(localStorage.getItem(DAYSLOTS_KEY)) || {}; } catch (e) { return {}; } })();
 // Дни, которые админ временно закрыл: диджеи в них ничего не отмечают
 const BLOCKED_KEY = 'mdjcal.blockedDays';
 let blockedDays = (() => { try { return new Set(JSON.parse(localStorage.getItem(BLOCKED_KEY)) || []); } catch (e) { return new Set(); } })();
-const slotsFor = ds => isWeekend(ds) ? WEEKEND_SLOTS : WEEKDAY_SLOTS;
+const slotsFor = ds => daySlots[ds] || (isWeekend(ds) ? WEEKEND_SLOTS : WEEKDAY_SLOTS);
+// «Ночь после вечера»: 00:00 идёт после 22:00
+const slotKey = slot => { const m = String(slot).match(/(\d{1,2}):(\d{2})/); if (!m) return 99999; const h = +m[1]; return (h < 12 ? h + 24 : h) * 60 + +m[2]; };
 const dateShort = s => { const { m, d } = parseDate(s); return `${d} ${MONTHS_GEN[m]}, ${WD_SHORT[weekday(s)]}`; };
 const dateLong = s => { const { m, d } = parseDate(s); return `${d} ${MONTHS_GEN[m]}, ${WD_LONG[weekday(s)]}`; };
 const shortSlot = slot => slot.replace(/:00/g, ''); // «22:00–00:00» → «22–00»
@@ -489,7 +494,7 @@ function renderGrid(el, cellInner, onPick) {
     if (ds === today) cls.push('today');
     if (extraWeekends.has(ds)) cls.push('holiday');
     if (blockedDays.has(ds)) cls.push('blocked');
-    const num = `<span class="num">${d}${blockedDays.has(ds) ? ' <span class="lock">🔒</span>' : ''}</span>`;
+    const num = `<span class="num">${d}${blockedDays.has(ds) ? ' <span class="lock">🔒</span>' : ''}${daySlots[ds] ? ' <span class="lock">🕒</span>' : ''}</span>`;
     html += `<button class="${cls.join(' ')}" data-date="${ds}">${num}${inner.html}</button>`;
   }
   el.innerHTML = html;
@@ -557,7 +562,7 @@ function openDay(ds) {
   let busy = !!state.busy[ds];
   openModal(`
     <h3>${dateLong(ds)}</h3>
-    <div class="muted" style="font-size:13px;margin-bottom:12px">${isWeekend(ds) ? 'Выходной' : 'Будний день'} · отметь своё свободное время</div>
+    <div class="muted" style="font-size:13px;margin-bottom:12px">${daySlots[ds] ? 'Слоты дня задал администратор' : isWeekend(ds) ? 'Выходной' : 'Будний день'} · отметь своё свободное время</div>
     <button class="busy-toggle" id="dBusy"><span>🚫</span><span>Весь день занят</span></button>
     <button class="busy-toggle free-toggle" id="dFree"><span>✅</span><span>Свободен весь день</span></button>
     ${slotsFor(ds).map(s => `
@@ -724,7 +729,9 @@ function openPeriod() {
         setDay(ds, [], true);
       } else {
         const cur = new Set(state.sets[ds] || []);
-        slotsFor(ds).filter(s => picked.has(s)).forEach(s => mode === 'free' ? cur.add(s) : cur.delete(s));
+        // в днях со своими слотами админа — все слоты дня, если выбраны все стандартные
+        const allPicked = [...WEEKDAY_SLOTS, ...WEEKEND_SLOTS].every(x => picked.has(x));
+        (daySlots[ds] ? (allPicked ? slotsFor(ds) : []) : slotsFor(ds).filter(s => picked.has(s))).forEach(s => mode === 'free' ? cur.add(s) : cur.delete(s));
         // отметить свободным — значит, день больше не «занят весь день»
         setDay(ds, slotsFor(ds).filter(s => cur.has(s)), mode === 'busy' && !!state.busy[ds]);
       }
@@ -754,6 +761,8 @@ async function api(action, payload = {}) {
   if (data.nick && (data.nickAt || 0) > (state.settings.nickAt || 0)) adoptNick(data.nick, data.nickAt);
   if (Array.isArray(data.weekends)) setExtraWeekends(data.weekends);
   if (Array.isArray(data.blocked)) setBlockedDays(data.blocked);
+  if (data.daySlots && typeof data.daySlots === 'object') setDaySlotsMap(data.daySlots);
+  if (data.clears && typeof data.clears === 'object') applyClears(data.clears);
   return data;
 }
 
@@ -787,7 +796,7 @@ async function wipeAfterRemoval(stamp) {
       try { localStorage.setItem(WIPED_KEY, stamp); } catch (e) {}
       renderAll();
     }
-    await api('save', { nick: nick(), sets: {}, nickAt: state.settings.nickAt || 0, wipeAck: stamp });
+    await api('save', { nick: nick(), sets: {}, nickAt: state.settings.nickAt || 0, clears: state.clears || {}, wipeAck: stamp });
     try { localStorage.setItem(PUSHED_KEY, String(state.updatedAt || 0)); } catch (e) {}
   } catch (e) {}
   wiping = false;
@@ -800,6 +809,26 @@ function adoptNick(newNick, at) {
   storeLocal();
   cloudPushSoon();
   renderAll();
+}
+
+function setDaySlotsMap(map) {
+  if (JSON.stringify(map) === JSON.stringify(daySlots)) return;
+  daySlots = map;
+  try { localStorage.setItem(DAYSLOTS_KEY, JSON.stringify(map)); } catch (e) {}
+  renderAll();
+}
+
+// Админ очистил день: стираем свободное время на эту дату и запоминаем, что очистку видели
+function applyClears(map) {
+  state.clears = state.clears || {};
+  let seen = false;
+  for (const ds in map) {
+    if ((state.clears[ds] || 0) >= map[ds]) continue;
+    delete state.sets[ds];
+    state.clears[ds] = map[ds];
+    seen = true;
+  }
+  if (seen) { save(); renderAll(); }
 }
 
 function setBlockedDays(list) {
@@ -849,7 +878,7 @@ async function serverPush() {
   renderServerStatus();
   try {
     // Админу уходит только свободное время; занятые дни остаются в личном календаре
-    const res = await api('save', { nick: nick(), sets: state.sets, nickAt: state.settings.nickAt || 0 });
+    const res = await api('save', { nick: nick(), sets: state.sets, nickAt: state.settings.nickAt || 0, clears: state.clears || {} });
     try { localStorage.setItem(PUSHED_KEY, String(stamp)); } catch (e) {}
     serverState = 'ok';
     setAdmin(res.admin);
@@ -1140,6 +1169,10 @@ function openAdminDay(ds) {
     ${blockedDays.has(ds) ? '<div class="status err" style="margin-top:10px">🔒 День закрыт: диджеи не могут отмечать в нём время</div>' : ''}
     ${isNaturalWeekend(ds) ? '' : `<button class="btn" id="aWeekend" style="width:100%;margin-top:12px">${extraWeekends.has(ds) ? 'Сделать обычным будним днём' : 'Отметить день как выходной'}</button>`}
     <button class="btn" id="aBlock" style="width:100%;margin-top:8px">${blockedDays.has(ds) ? '🔓 Снять ограничение с дня' : '🔒 Закрыть день для отметок'}</button>
+    <div class="row" style="margin-top:8px">
+      <button class="btn" id="aSlots" style="flex:1">🕒 Слоты дня</button>
+      <button class="btn danger-line" id="aClear" style="flex:1">🧹 Очистить день</button>
+    </div>
     <div class="actions">
       <button class="btn" id="aCopy">Скопировать</button>
       <button class="btn primary" id="aClose">Закрыть</button>
@@ -1164,8 +1197,78 @@ function openAdminDay(ds) {
   const wOn = !extraWeekends.has(ds), bOn = !blockedDays.has(ds);
   dayAction('aWeekend', 'weekend', 'weekends', wOn, wOn ? 'День отмечен как выходной — у всех диджеев слоты выходного' : 'День снова будний');
   dayAction('aBlock', 'block', 'blocked', bOn, bOn ? '🔒 День закрыт — диджеи не смогут отмечать в нём время' : '🔓 Ограничение снято — диджеи снова могут отмечать время');
+  $('aSlots').onclick = () => openDaySlots(ds);
+  $('aClear').onclick = () => openClearDay(ds);
   $('aCopy').onclick = () => copyText(`${dateShort(ds)}:\n` +
     lines.map(l => `${l.slot} — ${l.djs.length ? l.djs.map(dj => dj.nick || dj.tgName || dj.id).join(', ') : 'никого'}`).join('\n'));
+}
+
+// ---------- Свои слоты дня: админ меняет тайминги для всех диджеев ----------
+function openDaySlots(ds) {
+  const std = isWeekend(ds) ? WEEKEND_SLOTS : WEEKDAY_SLOTS;
+  let rows = slotsFor(ds).map(sl => sl.split('–'));
+  const draw = () => {
+    openModal(`
+      <h3>Слоты — ${dateShort(ds)}</h3>
+      <div class="muted" style="font-size:13px;margin-bottom:10px">${daySlots[ds] ? 'У дня свои слоты.' : 'Сейчас стандартные слоты.'} Новые слоты сразу появятся у всех диджеев.</div>
+      ${rows.map((r, i) => `
+        <div class="edit-row" style="margin-bottom:8px">
+          <input type="time" data-i="${i}" data-p="0" value="${r[0]}">
+          <span class="muted">–</span>
+          <input type="time" data-i="${i}" data-p="1" value="${r[1]}">
+          <button class="btn small" data-del="${i}" aria-label="Удалить">✕</button>
+        </div>`).join('') || '<div class="empty">Слотов нет — добавь хотя бы один</div>'}
+      <button class="btn" id="dsAdd" style="width:100%;margin-top:4px">＋ Добавить время вручную</button>
+      ${daySlots[ds] ? '<button class="btn" id="dsReset" style="width:100%;margin-top:8px">Вернуть стандартные слоты</button>' : ''}
+      <div class="muted" style="font-size:12px;margin-top:10px">Если слот убрать или поменять, отметки диджеев на старом слоте этого дня перестанут учитываться.</div>
+      <div class="actions">
+        <button class="btn" id="dsCancel">Отмена</button>
+        <button class="btn primary" id="dsSave">Сохранить</button>
+      </div>`);
+    $('modal').querySelectorAll('input[type=time]').forEach(inp => inp.oninput = () => { rows[inp.dataset.i][inp.dataset.p] = inp.value; });
+    $('modal').querySelectorAll('[data-del]').forEach(b => b.onclick = () => { rows.splice(+b.dataset.del, 1); draw(); });
+    $('dsAdd').onclick = () => { const last = rows[rows.length - 1]; rows.push([last ? last[1] : '22:00', '']); draw(); };
+    if ($('dsReset')) $('dsReset').onclick = () => saveSlots(null);
+    $('dsCancel').onclick = () => openAdminDay(ds);
+    $('dsSave').onclick = () => {
+      if (rows.some(r => !r[0] || !r[1])) { toast('Заполни начало и конец каждого слота', true); return; }
+      const list = [...new Set(rows.map(r => `${r[0]}–${r[1]}`))].sort((a, b) => slotKey(a) - slotKey(b));
+      if (!list.length) { toast('Добавь хотя бы один слот', true); return; }
+      // совпадает со стандартными — значит, своих слотов у дня нет
+      saveSlots(list.join() === std.join() ? null : list);
+    };
+  };
+  const saveSlots = list => manageDay($('dsSave'), 'dayslots', { date: ds, slots: list }, list ? 'Слоты дня сохранены — их видят все диджеи' : 'У дня снова стандартные слоты');
+  draw();
+}
+
+function openClearDay(ds) {
+  const n = (adminData || []).filter(dj => (dj.sets[ds] || []).length).length;
+  openModal(`
+    <h3>Очистить ${dateShort(ds)}?</h3>
+    <div class="muted" style="font-size:14px;line-height:1.45">Свободное время на этот день удалится у всех диджеев${n ? ` (отметили: ${n})` : ''} — в таблице и в их календарях. Опубликованное расписание не изменится.</div>
+    <div class="actions">
+      <button class="btn" id="clCancel">Отмена</button>
+      <button class="btn danger-fill" id="clOk">Очистить день</button>
+    </div>`);
+  $('clCancel').onclick = () => openAdminDay(ds);
+  $('clOk').onclick = () => manageDay($('clOk'), 'clearday', { date: ds }, '🧹 День очищен у всех диджеев');
+}
+
+// Запрос админа по одному дню: после ответа обновляем сводку и снова показываем день
+async function manageDay(btn, action, payload, okText) {
+  btn.disabled = true;
+  try {
+    const res = await api(action, payload);
+    adminData = res.djs;
+    adminRemoved = res.removed || [];
+    toast(okText);
+    renderAdmin();
+    openAdminDay(payload.date);
+  } catch (e) {
+    btn.disabled = false;
+    toast(e.message === 'unknown action' ? 'Обнови скрипт таблицы (новый Code.gs)' : 'Не удалось сохранить', true);
+  }
 }
 
 // ---------- Листание месяцев: стрелки и свайпы ----------
